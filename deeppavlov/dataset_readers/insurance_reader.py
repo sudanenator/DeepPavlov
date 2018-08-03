@@ -27,7 +27,11 @@ class InsuranceReader(DatasetReader):
         train_fname = Path(data_path) / 'insuranceQA-master/V1/question.train.token_idx.label'
         valid_fname = Path(data_path) / 'insuranceQA-master/V1/question.dev.label.token_idx.pool'
         test_fname = Path(data_path) / 'insuranceQA-master/V1/question.test1.label.token_idx.pool'
-        self.idxs2cont_vocab = self._build_context2toks_vocabulary(train_fname, valid_fname, test_fname)
+        int2tok_fname = Path(data_path) / 'vocabulary'
+        response2ints_fname = Path(data_path) / 'answers.label.token_idx'
+        self.int2tok_vocab = self._build_int2tok_vocab(int2tok_fname)
+        self.idxs2cont_vocab = self._build_context2toks_vocab(train_fname, valid_fname, test_fname)
+        self.response2toks_vocab = self._build_response2toks_vocab(response2ints_fname)
         dataset["valid"] = self._preprocess_data_valid_test(valid_fname)
         dataset["train"] = self._preprocess_data_train(train_fname)
         dataset["test"] = self._preprocess_data_valid_test(test_fname)
@@ -45,7 +49,7 @@ class InsuranceReader(DatasetReader):
                                 download_path=data_path)
             mark_done(data_path)
 
-    def _build_context2toks_vocabulary(self, train_f, val_f, test_f):
+    def _build_context2toks_vocab(self, train_f, val_f, test_f):
         contexts = []
         with open(train_f, 'r') as f:
             data = f.readlines()
@@ -68,6 +72,21 @@ class InsuranceReader(DatasetReader):
         idxs2cont_vocab = {el[1]: el[0] for el in enumerate(contexts)}
         return idxs2cont_vocab
 
+    def _build_int2tok_vocab(self, fname):
+        with open(fname, 'r') as f:
+            data = f.readlines()
+        int2tok_vocab = {int(el.split('\t')[0].split('_')[1]): el.split('\t')[1][:-1] for el in data}
+        return int2tok_vocab
+
+    def _build_response2toks_vocab(self, fname):
+        with open(fname, 'r') as f:
+            data = f.readlines()
+            response2idxs_vocab = {int(el.split('\t')[0]) - 1:
+                                   (el.split('\t')[1][:-1]).split(' ') for el in data}
+        response2toks_vocab = {el[0]: [self.int2tok_vocab[int(x.split('_')[1])]
+                                    for x in el[1]] for el in response2idxs_vocab.items()}
+        return response2toks_vocab
+
     def _preprocess_data_train(self, fname):
         positive_responses_pool = []
         contexts = []
@@ -77,11 +96,13 @@ class InsuranceReader(DatasetReader):
         for eli in data:
             eli = eli[:-1]
             q, pa = eli.split('\t')
+            q_tok = [self.int2tok_vocab[el.split('_')[1]] for el in q.split()]
             pa_list = [int(el) - 1 for el in pa.split(' ')]
-            for elj in pa_list:
-                contexts.append(self.idxs2cont_vocab[q])
+            pa_list_tok = [self.response2toks_vocab[el] for el in pa_list]
+            for elj in pa_list_tok:
+                contexts.append(q_tok)
                 responses.append(elj)
-                positive_responses_pool.append(pa_list)
+                positive_responses_pool.append(pa_list_tok)
         train_data = [{"context": el[0], "response": el[1],
                        "pos_pool": el[2], "neg_pool": None}
                       for el in zip(contexts, responses, positive_responses_pool)]
@@ -97,11 +118,13 @@ class InsuranceReader(DatasetReader):
         for eli in data:
             eli = eli[:-1]
             pa, q, na = eli.split('\t')
+            q_tok = [self.int2tok_vocab[el.split('_')[1]] for el in q.split()]
             pa_list = [int(el) - 1 for el in pa.split(' ')]
-            for elj in pa_list:
-                contexts.append(self.idxs2cont_vocab[q])
+            pa_list_tok = [self.response2toks_vocab[el] for el in pa_list]
+            for elj in pa_list_tok:
+                contexts.append(q_tok)
                 pos_responses.append(elj)
-                pos_responses_pool.append(pa_list)
+                pos_responses_pool.append(pa_list_tok)
                 nas = [int(el) - 1 for el in na.split(' ')]
                 nas = [el for el in nas if el not in pa_list]
                 neg_responses_pool.append(nas)
