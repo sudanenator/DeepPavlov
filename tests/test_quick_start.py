@@ -97,9 +97,9 @@ PARAMS = {
                 ("moderate price range", "{'pricerange': 'moderate'}")
             ]
     },
-    "elmo": {
-        ("elmo/elmo_ru-news.json", "elmo_ru-news", ('IP',)): [ONE_ARGUMENT_INFER_CHECK],
-    },
+
+    "ranking": {("ranking/ranking_insurance.json", "ranking", ALL_MODES): [ONE_ARGUMENT_INFER_CHECK],
+                ("ranking/en_ranker_tfidf_wiki_test.json", "ranking", ALL_MODES): [ONE_ARGUMENT_INFER_CHECK]},
 
     "squad": {
         ("squad/squad.json", "squad_model", ALL_MODES): [TWO_ARGUMENTS_INFER_CHECK],
