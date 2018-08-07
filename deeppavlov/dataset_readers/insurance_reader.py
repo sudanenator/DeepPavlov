@@ -27,8 +27,8 @@ class InsuranceReader(DatasetReader):
         train_fname = Path(data_path) / 'insuranceQA-master/V1/question.train.token_idx.label'
         valid_fname = Path(data_path) / 'insuranceQA-master/V1/question.dev.label.token_idx.pool'
         test_fname = Path(data_path) / 'insuranceQA-master/V1/question.test1.label.token_idx.pool'
-        int2tok_fname = Path(data_path) / 'vocabulary'
-        response2ints_fname = Path(data_path) / 'answers.label.token_idx'
+        int2tok_fname = Path(data_path) / 'insuranceQA-master/V1/vocabulary'
+        response2ints_fname = Path(data_path) / 'insuranceQA-master/V1/answers.label.token_idx'
         self.int2tok_vocab = self._build_int2tok_vocab(int2tok_fname)
         self.idxs2cont_vocab = self._build_context2toks_vocab(train_fname, valid_fname, test_fname)
         self.response2toks_vocab = self._build_response2toks_vocab(response2ints_fname)
@@ -96,16 +96,20 @@ class InsuranceReader(DatasetReader):
         for eli in data:
             eli = eli[:-1]
             q, pa = eli.split('\t')
-            q_tok = [self.int2tok_vocab[el.split('_')[1]] for el in q.split()]
+            q_tok = [self.int2tok_vocab[int(el.split('_')[1])] for el in q.split()]
             pa_list = [int(el) - 1 for el in pa.split(' ')]
             pa_list_tok = [self.response2toks_vocab[el] for el in pa_list]
             for elj in pa_list_tok:
                 contexts.append(q_tok)
                 responses.append(elj)
                 positive_responses_pool.append(pa_list_tok)
-        train_data = [{"context": el[0], "response": el[1],
-                       "pos_pool": el[2], "neg_pool": None}
+        # train_data = [{"context": el[0], "response": el[1],
+        #                "pos_pool": el[2], "neg_pool": None}
+        #               for el in zip(contexts, responses, positive_responses_pool)]
+        train_data = ['\t'.join([self.li2str(el[0]), self.li2str(el[1]),
+                                   '\t'.join(self.li2str(el[2])), '\t'.join([])])
                       for el in zip(contexts, responses, positive_responses_pool)]
+        train_data = [(el, 1) for el in train_data]
         return train_data
     
     def _preprocess_data_valid_test(self, fname):
@@ -118,16 +122,27 @@ class InsuranceReader(DatasetReader):
         for eli in data:
             eli = eli[:-1]
             pa, q, na = eli.split('\t')
-            q_tok = [self.int2tok_vocab[el.split('_')[1]] for el in q.split()]
+            q_tok = [self.int2tok_vocab[int(el.split('_')[1])] for el in q.split()]
             pa_list = [int(el) - 1 for el in pa.split(' ')]
             pa_list_tok = [self.response2toks_vocab[el] for el in pa_list]
+            nas = [int(el) - 1 for el in na.split(' ')]
+            nas = [el for el in nas if el not in pa_list]
+            nas_tok = [self.response2toks_vocab[el] for el in nas]
             for elj in pa_list_tok:
                 contexts.append(q_tok)
                 pos_responses.append(elj)
                 pos_responses_pool.append(pa_list_tok)
-                nas = [int(el) - 1 for el in na.split(' ')]
-                nas = [el for el in nas if el not in pa_list]
-                neg_responses_pool.append(nas)
-        data = [{"context": el[0], "response": el[1], "pos_pool": el[2], "neg_pool": el[3]}
+                neg_responses_pool.append(nas_tok)
+        # data = [{"context": el[0], "response": el[1], "pos_pool": el[2], "neg_pool": el[3]}
+        #         for el in zip(contexts, pos_responses, pos_responses_pool, neg_responses_pool)]
+        data = ['\t'.join([self.li2str(el[0]), self.li2str(el[1]),
+                             '\t'.join(self.li2str(el[2])), '\t'.join(self.li2str(el[3]))])
                 for el in zip(contexts, pos_responses, pos_responses_pool, neg_responses_pool)]
+        data = [(el, 1) for el in data]
         return data
+
+    def li2str(self, li):
+        if isinstance(li[0], list):
+            return [' '.join(el) for el in li]
+        else:
+            return ' '.join(li)

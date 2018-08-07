@@ -168,11 +168,9 @@ class RankingModel(NNModel):
         else:
             b = self.make_batch(x)
             for i in range(len(x[0])):
-                c = self.dict.make_toks(b[i][0], type="context")
-                c = self.dict.make_ints(c)
+                c = self.dict.make_ints(b[i][0])
                 b[i][0] = c
-                r = self.dict.make_toks(b[i][1], type="response")
-                r = self.dict.make_ints(r)
+                r = self.dict.make_ints(b[i][1])
                 b[i][1] = r
         self._net.train_on_batch(b, y)
 
@@ -194,8 +192,7 @@ class RankingModel(NNModel):
         batch_size = len(samples)
         num_samples = len(samples[0])
         samp = [y for el in samples for y in el]
-        s = self.dict.make_toks(samp, type="context")
-        s = self.dict.make_ints(s)
+        s = self.dict.make_ints(samp)
 
         embeddings = net.predict_embedding([s, s], 512, type='context')
         embeddings = embeddings / np.expand_dims(np.linalg.norm(embeddings, axis=1), axis=1)
@@ -329,10 +326,8 @@ class RankingModel(NNModel):
             y_pred = []
             b = self.make_batch(batch)
             for el in b:
-                c = self.dict.make_toks(el[0], type="context")
-                c = self.dict.make_ints(c)
-                r = self.dict.make_toks(el[1], type="response")
-                r = self.dict.make_ints(r)
+                c = self.dict.make_ints(el[0])
+                r = self.dict.make_ints(el[1])
                 yp = self._net.predict_score_on_batch([c, r])
                 y_pred.append(yp)
             y_pred = np.hstack(y_pred)
@@ -374,11 +369,9 @@ class RankingModel(NNModel):
             labels_cont.append(lc)
             labels_resp.append(lr)
         for i in range(sample_len):
-            c = self.dict.make_toks(labels_cont[i], type="context")
-            c = self.dict.make_ints(c)
+            c = self.dict.make_ints(labels_cont[i])
             cont.append(c)
-            r = self.dict.make_toks(labels_resp[i], type="response")
-            r = self.dict.make_ints(r)
+            r = self.dict.make_ints(labels_resp[i])
             resp.append(r)
         for el in zip(labels_cont, cont):
             c_emb = self._net.predict_embedding_on_batch([el[1], el[1]], type='context')
