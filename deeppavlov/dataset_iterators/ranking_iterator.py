@@ -62,9 +62,6 @@ class RankingIterator(DataLearningIterator):
         random_batches: Whether to choose batches randomly or iterate over data sequentally in training mode.
         batches_per_epoch: A number of batches to choose per each epoch in training mode.
             Only required if ``random_batches`` is set to ``True``.
-        triplet_mode: Whether to use a model with triplet loss.
-            If ``False``, a model with crossentropy loss will be used.
-        hard_triplets_sampling: Whether to use hard triplets method of sampling in training mode.
         num_positive_samples: A number of contexts to choose from `pos_pool` for each `context`.
             Only required if ``hard_triplets_sampling`` is set to ``True``.
     """
@@ -80,12 +77,9 @@ class RankingIterator(DataLearningIterator):
                  seed: int = None,
                  shuffle: bool = False,
                  len_vocab: int = 0,
-                 pos_pool_sample: bool = False,
                  pos_pool_rank: bool = True,
                  random_batches: bool = False,
                  batches_per_epoch: int = None,
-                 triplet_mode: bool = True,
-                 hard_triplets_sampling: bool = False,
                  num_positive_samples: int = 5):
 
         self.sample_candidates_pool = sample_candidates_pool
@@ -95,12 +89,9 @@ class RankingIterator(DataLearningIterator):
         self.num_ranking_samples_valid = num_ranking_samples_valid
         self.num_ranking_samples_test = num_ranking_samples_test
         self.len_vocab = len_vocab
-        self.pos_pool_sample = pos_pool_sample
         self.pos_pool_rank = pos_pool_rank
         self.random_batches = random_batches
         self.batches_per_epoch = batches_per_epoch
-        self.triplet_mode = triplet_mode
-        self.hard_triplets_sampling = hard_triplets_sampling
         self.num_positive_samples = num_positive_samples
 
         np.random.seed(seed)
@@ -146,27 +137,28 @@ class RankingIterator(DataLearningIterator):
                     context_response_data = np.random.choice(data, size=batch_size, replace=False)
                 else:
                     context_response_data = data[i * batch_size:(i + 1) * batch_size]
-                context = [el["context"] for el in context_response_data]
-                if self.pos_pool_sample:
-                    response = [random.choice(el["pos_pool"]) for el in context_response_data]
-                else:
-                    response = [el["response"] for el in context_response_data]
-                if self.triplet_mode:
-                    negative_response = self._create_neg_resp_rand(context_response_data, batch_size)
-                    if self.hard_triplets_sampling:
-                        labels = [el["label"] for el in context_response_data]
-                        positives = [random.choices(el["pos_pool"], k=self.num_positive_samples)
-                                     for el in context_response_data]
-                        x = [[(context[i], el) for el in positives[i]] for i in range(len(context_response_data))]
-                        y = labels
-                    else:
-                        x = [[(context[i], el) for el in [response[i]] + [negative_response[i]]]
-                             for i in range(len(context_response_data))]
-                        y = batch_size * [np.ones(2)]
-                else:
-                    y = [el["label"] for el in context_response_data]
-                    x = [[(context[i], response[i])] for i in range(len(context_response_data))]
-                yield (x, y)
+                # context = [el["context"] for el in context_response_data]
+                # if self.pos_pool_sample:
+                #     response = [random.choice(el["pos_pool"]) for el in context_response_data]
+                # else:
+                #     response = [el["response"] for el in context_response_data]
+                # if self.triplet_mode:
+                #     negative_response = self._create_neg_resp_rand(context_response_data, batch_size)
+                #     if self.hard_triplets_sampling:
+                #         labels = [el["label"] for el in context_response_data]
+                #         positives = [random.choices(el["pos_pool"], k=self.num_positive_samples)
+                #                      for el in context_response_data]
+                #         x = [[(context[i], el) for el in positives[i]] for i in range(len(context_response_data))]
+                #         y = labels
+                #     else:
+                #         x = [[(context[i], el) for el in [response[i]] + [negative_response[i]]]
+                #              for i in range(len(context_response_data))]
+                #         y = batch_size * [np.ones(2)]
+                # else:
+                #     y = [el["label"] for el in context_response_data]
+                #     x = [[(context[i], response[i])] for i in range(len(context_response_data))]
+                # yield (x, y)
+                yield tuple(zip(*context_response_data))
         if data_type in ["valid", "test"]:
             for i in range(num_steps + 1):
                 if i < num_steps:
@@ -174,22 +166,23 @@ class RankingIterator(DataLearningIterator):
                 else:
                     if len(data[i * batch_size:len(data)]) > 0:
                         context_response_data = data[i * batch_size:len(data)]
-                context = [el["context"] for el in context_response_data]
-                if data_type == "valid":
-                    ranking_length = self.num_ranking_samples_valid
-                    sample_candidates_pool = self.sample_candidates_pool_valid
-                elif data_type == "test":
-                    ranking_length = self.num_ranking_samples_test
-                    sample_candidates_pool = self.sample_candidates_pool_test
-                if not sample_candidates_pool:
-                    ranking_length = self.len_vocab
-                response_data = self._create_rank_resp(context_response_data, ranking_length)
-                if self.pos_pool_rank:
-                    y = [len(el["pos_pool"]) * np.ones(ranking_length) for el in context_response_data]
-                else:
-                    y = [np.ones(ranking_length) for _ in context_response_data]
-                x = [[(context[i], el) for el in response_data[i]] for i in range(len(context_response_data))]
-                yield (x, y)
+                # context = [el["context"] for el in context_response_data]
+                # if data_type == "valid":
+                #     ranking_length = self.num_ranking_samples_valid
+                #     sample_candidates_pool = self.sample_candidates_pool_valid
+                # elif data_type == "test":
+                #     ranking_length = self.num_ranking_samples_test
+                #     sample_candidates_pool = self.sample_candidates_pool_test
+                # if not sample_candidates_pool:
+                #     ranking_length = self.len_vocab
+                # response_data = self._create_rank_resp(context_response_data, ranking_length)
+                # if self.pos_pool_rank:
+                #     y = [len(el["pos_pool"]) * np.ones(ranking_length) for el in context_response_data]
+                # else:
+                #     y = [np.ones(ranking_length) for _ in context_response_data]
+                # x = [[(context[i], el) for el in response_data[i]] for i in range(len(context_response_data))]
+                # yield (x, y)
+                yield tuple(zip(*context_response_data))
 
     def _create_neg_resp_rand(self, context_response_data, batch_size):
         """Randomly chooses negative response for each context in a batch.

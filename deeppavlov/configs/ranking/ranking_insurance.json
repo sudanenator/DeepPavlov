@@ -19,21 +19,19 @@
     "in_y": ["y"],
     "pipe": [
       {
-        "id": "ranking_preprocessor",
-        "name": "ranking_vocab_preprocessor",
-        "level": "token",
+        "id": "insurance_vocab",
+        "name": "ranking_vocab",
         "save_path": "vocabs/",
         "load_path": "vocabs/",
-        "tokenizer": { "name": "split_tokenizer" },
         "num_negative_samples": 500,
         "max_sequence_length": 200,
+        "tokenizer": {"name": "split_tokenizer"},
         "fit_on": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
         "in": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
-        "out": ["c_tok", "r_tok", "pos_pool_tok", "neg_pool_tok"]
+        "out": ["c_ind", "r_ind", "pos_pool_ind", "neg_pool_ind"]
       },
-
       {
-        "in": ["c_tok", "r_tok", "pos_pool_tok", "neg_pool_tok"],
+        "in": ["c_ind", "r_ind", "pos_pool_ind", "neg_pool_ind"],
         "in_y": ["y"],
         "out": ["y_predicted"],
         "name": "ranking_model",

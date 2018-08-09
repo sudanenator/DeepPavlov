@@ -27,12 +27,10 @@ from deeppavlov.core.common.attributes import check_attr_true
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.nn_model import NNModel
 from deeppavlov.models.ranking.ranking_network import RankingNetwork
-from deeppavlov.models.ranking.insurance_dict import InsuranceDict
-from deeppavlov.models.ranking.sber_faq_dict import SberFAQDict
-from deeppavlov.models.ranking.ubuntu_v2_dict import UbuntuV2Dict
 from deeppavlov.models.ranking.emb_dict import EmbDict
 from deeppavlov.core.common.log import get_logger
 from typing import Union, List, Tuple, Dict
+import random
 
 log = get_logger(__name__)
 
@@ -50,11 +48,10 @@ class RankingModel(NNModel):
         semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
             than positive samples or not.
         update_embeddings: Whether to store and update context and response embeddings or not.
-        online_update: Only works when ``update_embeddings`` is set to ``True``.
-            Whether to update context and response embeddings which will be used next at the training step.
-            If ``False``, all context and response embeddings will be updated before the validation.
         interact_pred_num: The number of the most relevant contexts and responses
             which model returns in the `interact` regime.
+        triplet_mode: Whether to use a model with triplet loss.
+            If ``False``, a model with crossentropy loss will be used.
         **kwargs: Other parameters.
     """
 
@@ -65,8 +62,10 @@ class RankingModel(NNModel):
                  semi_hard_negatives: bool = False,
                  num_hardest_negatives: int = None,
                  update_embeddings: bool = False,
-                 online_update: bool = True,
                  interact_pred_num: int = 3,
+                 pos_pool_sample: bool = False,
+                 seed: int = None,
+                 triplet_mode: bool = True,
                  **kwargs):
 
         # Parameters for parent classes
@@ -83,25 +82,13 @@ class RankingModel(NNModel):
         self.semi_hard_negatives = semi_hard_negatives
         self.num_hardest_negatives = num_hardest_negatives
         self.upd_embs = update_embeddings
-        self.online_update= online_update
         self.interact_pred_num = interact_pred_num
         self.train_now = train_now
         self.vocab_name = vocab_name
+        self.pos_pool_sample = pos_pool_sample
+        self.triplet_mode = triplet_mode
 
         opt = deepcopy(kwargs)
-
-        if self.vocab_name == "insurance":
-            dict_parameter_names = list(inspect.signature(InsuranceDict.__init__).parameters)
-            dict_parameters = {par: opt[par] for par in dict_parameter_names if par in opt}
-            self.dict = InsuranceDict(**dict_parameters)
-        elif self.vocab_name == "sber_faq":
-            dict_parameter_names = list(inspect.signature(SberFAQDict.__init__).parameters)
-            dict_parameters = {par: opt[par] for par in dict_parameter_names if par in opt}
-            self.dict = SberFAQDict(**dict_parameters)
-        elif self.vocab_name == "ubuntu_v2":
-            dict_parameter_names = list(inspect.signature(UbuntuV2Dict.__init__).parameters)
-            dict_parameters = {par: opt[par] for par in dict_parameter_names if par in opt}
-            self.dict = UbuntuV2Dict(**dict_parameters)
 
         embdict_parameter_names = list(inspect.signature(EmbDict.__init__).parameters)
         embdict_parameters = {par: opt[par] for par in embdict_parameter_names if par in opt}
@@ -115,12 +102,13 @@ class RankingModel(NNModel):
         train_parameters_names = list(inspect.signature(self._net.train_on_batch).parameters)
         self.train_parameters = {par: opt[par] for par in train_parameters_names if par in opt}
 
+        random.seed(seed)
+
     @overrides
     def load(self):
         """Load the model from the last checkpoint."""
         if not self.load_path.exists():
             log.info("[initializing new `{}`]".format(self.__class__.__name__))
-            self.dict.init_from_scratch()
             self.embdict.init_from_scratch(self.dict.tok2int_vocab)
             if hasattr(self.dict, 'char2int_vocab'):
                 chars_num = len(self.dict.char2int_vocab)
@@ -151,40 +139,37 @@ class RankingModel(NNModel):
         log.info('[saving model to {}]'.format(self.save_path.resolve()))
         self._net.save(self.save_path)
         if self.upd_embs:
-            if not self.online_update:
-                self.set_embeddings()
+            self.set_embeddings()
         self.dict.save()
         self.embdict.save()
 
     @check_attr_true('train_now')
-    def train_on_batch(self, x: List[List[Tuple[int, int]]], y: List[int]):
+    def train_on_batch(self, context, response, pos_pool, neg_pool, y):
         """Train the model on a batch."""
         if self.upd_embs:
-            if not self.online_update:
-                self.reset_embeddings()
+            self.reset_embeddings()
         if self.hard_triplets_sampling:
             b = self.make_hard_triplets(x, y, self._net)
             y = np.ones(len(b[0][0]))
         else:
-            b = self.make_batch(x)
-            for i in range(len(x[0])):
-                c = self.dict.make_ints(b[i][0])
-                b[i][0] = c
-                r = self.dict.make_ints(b[i][1])
-                b[i][1] = r
+            b = self.make_batch(context, response, pos_pool, neg_pool)
         self._net.train_on_batch(b, y)
 
-    def  make_batch(self, x):
-        sample_len = len(x[0])
-        b = []
-        for i in range(sample_len):
-            c = []
-            r = []
-            for el in x:
-                c.append(el[i][0])
-                r.append(el[i][1])
-            b.append([c, r])
-        return b
+    def make_batch(self, cont, resp, pos_pool, neg_pool):
+        if self.pos_pool_sample:
+            response = [random.choice(el) for el in pos_pool]
+        else:
+            response = resp
+        if self.triplet_mode:
+            negative_response = [random.choice(el) for el in neg_pool]
+            if self.hard_triplets_sampling:
+                positives = [random.choices(el, k=self.num_positive_samples) for el in pos_pool]
+                x = [(cont, el) for el in zip(*positives)]
+            else:
+                x = [(cont, response), (cont, negative_response)]
+        else:
+            x = [cont, response]
+        return x
 
     def make_hard_triplets(self, x, y, net):
         samples = [[s[1] for s in el] for el in x]
@@ -314,26 +299,18 @@ class RankingModel(NNModel):
                 return x[1], True
         return random.choice(n_li)[1], False
 
-    def __call__(self, batch: Union[List[List[Tuple[int, int]]], List[str]]) ->\
-            Union[np.ndarray, Dict[str, List[str]]]:
+    def __call__(self, context, response, pos_pool, neg_pool):
         """Make a prediction on a batch."""
-        if type(batch[0]) == list:
-            if self.upd_embs:
-                if self.online_update:
-                    self.update_embeddings(batch)
-                else:
-                    self.set_embeddings()
+        if isinstance(context, list):
             y_pred = []
-            b = self.make_batch(batch)
+            b = self.make_batch(context, response, pos_pool, neg_pool)
             for el in b:
-                c = self.dict.make_ints(el[0])
-                r = self.dict.make_ints(el[1])
-                yp = self._net.predict_score_on_batch([c, r])
+                yp = self._net.predict_score_on_batch(el)
                 y_pred.append(yp)
             y_pred = np.hstack(y_pred)
             return y_pred
 
-        elif type(batch[0]) == str:
+        elif isinstance(context, str):
             c_input = tokenize(batch)
             c_input = self.dict.make_ints(c_input)
             c_input_emb = self._net.predict_embedding_on_batch([c_input, c_input], type='context')
@@ -353,34 +330,6 @@ class RankingModel(NNModel):
             pred_resp = [' '.join(self.dict.response2toks_vocab[el]) for el in pred_resp]
             y_pred = [{"contexts": pred_cont, "responses": pred_resp}]
             return y_pred
-
-    def update_embeddings(self, batch):
-        sample_len = len(batch[0])
-        labels_cont = []
-        labels_resp = []
-        cont = []
-        resp = []
-        for i in range(sample_len):
-            lc = []
-            lr = []
-            for el in batch:
-                lc.append(el[i][0])
-                lr.append(el[i][1])
-            labels_cont.append(lc)
-            labels_resp.append(lr)
-        for i in range(sample_len):
-            c = self.dict.make_ints(labels_cont[i])
-            cont.append(c)
-            r = self.dict.make_ints(labels_resp[i])
-            resp.append(r)
-        for el in zip(labels_cont, cont):
-            c_emb = self._net.predict_embedding_on_batch([el[1], el[1]], type='context')
-            for i in range(len(el[0])):
-                self.dict.context2emb_vocab[el[0][i]] = c_emb[i]
-        for el in zip(labels_resp, resp):
-            r_emb = self._net.predict_embedding_on_batch([el[1], el[1]], type='response')
-            for i in range(len(el[0])):
-                self.dict.response2emb_vocab[el[0][i]] = r_emb[i]
 
     def set_embeddings(self):
         if self.dict.response2emb_vocab[0] is None:

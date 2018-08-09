@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-from abc import ABCMeta, abstractmethod
 import numpy as np
 from deeppavlov.core.commands.utils import expand_path
 from keras.preprocessing.sequence import pad_sequences
@@ -22,12 +20,13 @@ import random
 
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.estimator import Estimator
+from typing import List, Callable
 
 log = get_logger(__name__)
 
 
-@register('ranking_vocab_preprocessor')
-class RankingVocabPreprocessor(Estimator):
+@register('ranking_vocab')
+class RankingVocab(Estimator):
     # def __init__(self):
     #     pass
     #
@@ -59,7 +58,9 @@ class RankingVocabPreprocessor(Estimator):
                  char_dynamic_batch: bool = False,
                  update_embeddings: bool = False,
                  num_negative_samples: int = 10,
-                 seed: int = None):
+                 tokenizer: Callable = None,
+                 seed: int = None,
+                 **kwargs):
 
         self.max_sequence_length = max_sequence_length
         self.token_embeddings = token_embeddings
@@ -72,6 +73,8 @@ class RankingVocabPreprocessor(Estimator):
         self.tok_dynamic_batch = tok_dynamic_batch
         self.char_dynamic_batch = char_dynamic_batch
         self.upd_embs = update_embeddings
+        self.num_negative_samples = num_negative_samples
+        self.tokenizer = tokenizer
 
         save_path = expand_path(save_path).resolve()
         load_path = expand_path(load_path).resolve()
@@ -98,18 +101,28 @@ class RankingVocabPreprocessor(Estimator):
 
         random.seed(seed)
 
-    def fit(self):
+        super().__init__(load_path=load_path, save_path=save_path, **kwargs)
+
+
+    def fit(self, context, response, pos_pool, neg_pool):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
         if self.char_embeddings:
             self.build_int2char_vocab()
             self.build_char2int_vocab()
-        self.build_int2tok_vocab()
+        c_tok = self.tokenizer(context)
+        r_tok = self.tokenizer(response)
+        pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
+        if neg_pool[0] is not None:
+            neg_pool_tok = [self.tokenizer(el) for el in neg_pool]
+        else:
+            neg_pool_tok = neg_pool
+        self.build_int2tok_vocab(c_tok, r_tok, pos_pool_tok, neg_pool_tok)
         self.build_tok2int_vocab()
-        self.build_context2toks_vocabulary()
-        self.build_response2toks_vocabulary()
+        self.build_context2toks_vocab(c_tok)
+        self.build_response2toks_vocab(r_tok, pos_pool_tok, neg_pool_tok)
         if self.upd_embs:
-            self.build_context2emb_vocabulary()
-            self.build_response2emb_vocabulary()
+            self.build_context2emb_vocab()
+            self.build_response2emb_vocab()
 
     def load(self):
         log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
@@ -135,22 +148,39 @@ class RankingVocabPreprocessor(Estimator):
             self.save_cont()
             self.save_resp()
 
-
-    @abstractmethod
     def build_int2char_vocab(self):
         pass
 
-    @abstractmethod
-    def build_int2tok_vocab(self):
-        pass
+    def build_int2tok_vocab(self, c_tok, r_tok, pos_pool_tok, neg_pool_tok):
+        c = set([x for el in c_tok for x in el])
+        r = set([x for el in r_tok for x in el])
+        ppool = [x for el in pos_pool_tok for x in el]
+        ppool = set([x for el in ppool for x in el])
+        r = r | ppool
+        if neg_pool_tok[0] is not None:
+            npool = [x for el in neg_pool_tok for x in el]
+            npool = set([x for el in npool for x in el])
+            r = r | npool
+        tok = c | r
+        self.int2tok_vocab = {el[0]+1:el[1] for el in enumerate(tok)}
+        self.int2tok_vocab[0] = '<UNK>'
 
-    @abstractmethod
-    def build_response2toks_vocabulary(self):
-        pass
+    def build_response2toks_vocab(self, r_tok, pos_pool_tok, neg_pool_tok):
+        r = set([' '.join(el) for el in r_tok])
+        ppool = [x for el in pos_pool_tok for x in el]
+        ppool = set([' '.join(el) for el in ppool])
+        r = r | ppool
+        if neg_pool_tok[0] is not None:
+            npool = [x for el in neg_pool_tok for x in el]
+            npool = set([' '.join(el) for el in npool])
+            r = r | npool
+        self.response2toks_vocab = {el[0]: el[1].split() for el in enumerate(r)}
 
-    @abstractmethod
-    def build_context2toks_vocabulary(self):
-        pass
+    def build_context2toks_vocab(self, contexts):
+        c = [' '.join(el) for el in contexts]
+        c = set(c)
+        self.context2toks_vocab = {el[0]: el[1].split() for el in enumerate(c)}
+
 
     def build_char2int_vocab(self):
         self.char2int_vocab = {el[1]: el[0] for el in self.int2char_vocab.items()}
@@ -158,11 +188,11 @@ class RankingVocabPreprocessor(Estimator):
     def build_tok2int_vocab(self):
         self.tok2int_vocab = {el[1]: el[0] for el in self.int2tok_vocab.items()}
 
-    def build_response2emb_vocabulary(self):
+    def build_response2emb_vocab(self):
         for i in range(len(self.response2toks_vocab)):
             self.response2emb_vocab[i] = None
 
-    def build_context2emb_vocabulary(self):
+    def build_context2emb_vocab(self):
         for i in range(len(self.context2toks_vocab)):
             self.context2emb_vocab[i] = None
 
@@ -181,19 +211,32 @@ class RankingVocabPreprocessor(Estimator):
             toks_li = self.resps2toks(items_li)
         return toks_li
 
-    def __call__(self, batch):
-        b = []
-        for el in batch:
-            it = []
-            for item in el:
-                if item is not None:
-                    it.append(self.make_ints(item))
-                else:
+    def __call__(self, context, response, pos_pool, neg_pool):
+        c_tok = self.tokenizer(context)
+        r_tok = self.tokenizer(response)
+        pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
+        if neg_pool[0] is not None:
+            neg_pool_tok = [self.tokenizer(el) for el in neg_pool]
+        else:
+            neg_pool_tok = neg_pool
+        c = [el for el in self.make_ints(c_tok)]
+        r = [el for el in self.make_ints(r_tok)]
+        ppool = [self.make_ints(el) for el in pos_pool]
+        if neg_pool[0] is not None:
+            npool =[self.make_ints(el) for el in neg_pool_tok]
+        else:
+            npool = [self.make_ints(self.generate_items(el)) for el in pos_pool_tok]
 
+        return c, r, ppool, npool
 
-
-
-
+    def generate_items(self, pos_pool):
+        candidates = []
+        for i in range(self.num_negative_samples):
+            candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
+            while candidate in pos_pool:
+                candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
+            candidates.append(candidate)
+        return candidates
 
     def make_ints(self, toks_li):
         if self.tok_dynamic_batch:

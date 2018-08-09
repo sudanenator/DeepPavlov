@@ -106,8 +106,7 @@ class InsuranceReader(DatasetReader):
         # train_data = [{"context": el[0], "response": el[1],
         #                "pos_pool": el[2], "neg_pool": None}
         #               for el in zip(contexts, responses, positive_responses_pool)]
-        train_data = ['\t'.join([self.li2str(el[0]), self.li2str(el[1]),
-                                   '\t'.join(self.li2str(el[2])), '\t'.join([])])
+        train_data = [[self.li2str(el[0]), self.li2str(el[1]), self.li2str(el[2]), None]
                       for el in zip(contexts, responses, positive_responses_pool)]
         train_data = [(el, 1) for el in train_data]
         return train_data
@@ -135,8 +134,7 @@ class InsuranceReader(DatasetReader):
                 neg_responses_pool.append(nas_tok)
         # data = [{"context": el[0], "response": el[1], "pos_pool": el[2], "neg_pool": el[3]}
         #         for el in zip(contexts, pos_responses, pos_responses_pool, neg_responses_pool)]
-        data = ['\t'.join([self.li2str(el[0]), self.li2str(el[1]),
-                             '\t'.join(self.li2str(el[2])), '\t'.join(self.li2str(el[3]))])
+        data = [[self.li2str(el[0]), self.li2str(el[1]), self.li2str(el[2]), self.li2str(el[3])]
                 for el in zip(contexts, pos_responses, pos_responses_pool, neg_responses_pool)]
         data = [(el, 1) for el in data]
         return data

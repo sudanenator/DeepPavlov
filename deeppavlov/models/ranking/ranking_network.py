@@ -356,9 +356,7 @@ class RankingNetwork(metaclass=TfModelMeta):
             if self.use_matrix:
                 self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
             else:
-                b = batch
-                for i in range(len(b)):
-                    b[i] = self.emb_dict.get_embs(b[i])
+                b = [self.emb_dict.get_embs(el) for el in batch]
                 self.obj_model.train_on_batch(x=b, y=np.asarray(y))
         elif not self.token_embeddings and self.char_embeddings:
             self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
@@ -376,9 +374,7 @@ class RankingNetwork(metaclass=TfModelMeta):
             if self.use_matrix:
                 return self.score_model.predict_on_batch(x=batch)
             else:
-                b = batch
-                for i in range(len(b)):
-                    b[i] = self.emb_dict.get_embs(b[i])
+                b = [self.emb_dict.get_embs(el) for el in batch]
                 return self.score_model.predict_on_batch(x=b)
         elif not self.token_embeddings and self.char_embeddings:
             return self.score_model.predict_on_batch(x=batch)
@@ -399,8 +395,7 @@ class RankingNetwork(metaclass=TfModelMeta):
             if self.use_matrix:
                 return embedding.predict_on_batch(x=batch)
             else:
-                b = batch
-                b = [self.emb_dict.get_embs(el) for el in b]
+                b = [self.emb_dict.get_embs(el) for el in batch]
                 return embedding.predict_on_batch(x=b)
         elif not self.token_embeddings and self.char_embeddings:
             return embedding.predict_on_batch(x=batch)
