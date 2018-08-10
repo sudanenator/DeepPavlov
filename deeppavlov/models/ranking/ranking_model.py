@@ -27,7 +27,6 @@ from deeppavlov.core.common.attributes import check_attr_true
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.nn_model import NNModel
 from deeppavlov.models.ranking.ranking_network import RankingNetwork
-from deeppavlov.models.ranking.emb_dict import EmbDict
 from deeppavlov.core.common.log import get_logger
 from typing import Union, List, Tuple, Dict
 import random
@@ -42,11 +41,6 @@ class RankingModel(NNModel):
     Args:
         vocab_name: A key word that indicates which subclass
             of the :class:`deeppavlov.models.ranking.ranking_dict.RankingDict` to use.
-        hard_triplets_sampling: Whether to use hard triplets sampling to train the model
-            i.e. to choose negative samples close to positive ones.
-        hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
-        semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
-            than positive samples or not.
         update_embeddings: Whether to store and update context and response embeddings or not.
         interact_pred_num: The number of the most relevant contexts and responses
             which model returns in the `interact` regime.
@@ -56,11 +50,7 @@ class RankingModel(NNModel):
     """
 
     def __init__(self,
-                 vocab_name,
-                 hard_triplets_sampling: bool = False,
-                 hardest_positives: bool = False,
-                 semi_hard_negatives: bool = False,
-                 num_hardest_negatives: int = None,
+                 len_vocab: int,
                  update_embeddings: bool = False,
                  interact_pred_num: int = 3,
                  pos_pool_sample: bool = False,
@@ -77,22 +67,14 @@ class RankingModel(NNModel):
         super().__init__(save_path=save_path, load_path=load_path,
                          train_now=train_now, mode=mode)
 
-        self.hard_triplets_sampling = hard_triplets_sampling
-        self.hardest_positives = hardest_positives
-        self.semi_hard_negatives = semi_hard_negatives
-        self.num_hardest_negatives = num_hardest_negatives
         self.upd_embs = update_embeddings
         self.interact_pred_num = interact_pred_num
         self.train_now = train_now
-        self.vocab_name = vocab_name
         self.pos_pool_sample = pos_pool_sample
         self.triplet_mode = triplet_mode
+        self.len_vocab = len_vocab
 
         opt = deepcopy(kwargs)
-
-        embdict_parameter_names = list(inspect.signature(EmbDict.__init__).parameters)
-        embdict_parameters = {par: opt[par] for par in embdict_parameter_names if par in opt}
-        self.embdict= EmbDict(**embdict_parameters)
 
         network_parameter_names = list(inspect.signature(RankingNetwork.__init__).parameters)
         self.network_parameters = {par: opt[par] for par in network_parameter_names if par in opt}
@@ -109,27 +91,27 @@ class RankingModel(NNModel):
         """Load the model from the last checkpoint."""
         if not self.load_path.exists():
             log.info("[initializing new `{}`]".format(self.__class__.__name__))
-            self.embdict.init_from_scratch(self.dict.tok2int_vocab)
-            if hasattr(self.dict, 'char2int_vocab'):
-                chars_num = len(self.dict.char2int_vocab)
-            else:
-                chars_num = 0
+            # self.embdict.init_from_scratch(self.tok2int_vocab)
+            # if hasattr(self.dict, 'char2int_vocab'):
+            #     chars_num = len(self.dict.char2int_vocab)
+            # else:
+            #     chars_num = 0
+
+            chars_num = 0
             self._net = RankingNetwork(chars_num=chars_num,
-                                       toks_num=len(self.dict.tok2int_vocab),
-                                       emb_dict=self.embdict,
+                                       toks_num=self.len_vocab,
                                        **self.network_parameters)
-            self._net.init_from_scratch(self.embdict.emb_matrix)
+            # self._net.init_from_scratch(self.embdict.emb_matrix)
+            self._net.init_from_scratch()
         else:
             log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
-            self.dict.load()
-            self.embdict.load()
+            # self.embdict.load()
             if hasattr(self.dict, 'char2int_vocab'):
                 chars_num = len(self.dict.char2int_vocab)
             else:
                 chars_num = 0
             self._net = RankingNetwork(chars_num=chars_num,
                                        toks_num=len(self.dict.tok2int_vocab),
-                                       emb_dict=self.embdict,
                                        **self.network_parameters)
             self._net.load(self.load_path)
 
@@ -140,164 +122,14 @@ class RankingModel(NNModel):
         self._net.save(self.save_path)
         if self.upd_embs:
             self.set_embeddings()
-        self.dict.save()
-        self.embdict.save()
+        # self.embdict.save()
 
     @check_attr_true('train_now')
-    def train_on_batch(self, context, response, pos_pool, neg_pool, y):
+    def train_on_batch(self, batch, y):
         """Train the model on a batch."""
         if self.upd_embs:
             self.reset_embeddings()
-        if self.hard_triplets_sampling:
-            b = self.make_hard_triplets(x, y, self._net)
-            y = np.ones(len(b[0][0]))
-        else:
-            b = self.make_batch(context, response, pos_pool, neg_pool)
-        self._net.train_on_batch(b, y)
-
-    def make_batch(self, cont, resp, pos_pool, neg_pool):
-        if self.pos_pool_sample:
-            response = [random.choice(el) for el in pos_pool]
-        else:
-            response = resp
-        if self.triplet_mode:
-            negative_response = [random.choice(el) for el in neg_pool]
-            if self.hard_triplets_sampling:
-                positives = [random.choices(el, k=self.num_positive_samples) for el in pos_pool]
-                x = [(cont, el) for el in zip(*positives)]
-            else:
-                x = [(cont, response), (cont, negative_response)]
-        else:
-            x = [cont, response]
-        return x
-
-    def make_hard_triplets(self, x, y, net):
-        samples = [[s[1] for s in el] for el in x]
-        labels = y
-        batch_size = len(samples)
-        num_samples = len(samples[0])
-        samp = [y for el in samples for y in el]
-        s = self.dict.make_ints(samp)
-
-        embeddings = net.predict_embedding([s, s], 512, type='context')
-        embeddings = embeddings / np.expand_dims(np.linalg.norm(embeddings, axis=1), axis=1)
-        dot_product = embeddings @ embeddings.T
-        square_norm = np.diag(dot_product)
-        distances = np.expand_dims(square_norm, 0) - 2.0 * dot_product + np.expand_dims(square_norm, 1)
-        distances = np.maximum(distances, 0.0)
-        distances = np.sqrt(distances)
-
-        mask_anchor_negative = np.expand_dims(np.repeat(labels, num_samples), 0)\
-                               != np.expand_dims(np.repeat(labels, num_samples), 1)
-        mask_anchor_negative = mask_anchor_negative.astype(float)
-        max_anchor_negative_dist = np.max(distances, axis=1, keepdims=True)
-        anchor_negative_dist = distances + max_anchor_negative_dist * (1.0 - mask_anchor_negative)
-        if self.num_hardest_negatives is not None:
-            hard = np.argsort(anchor_negative_dist, axis=1)[:, :self.num_hardest_negatives]
-            ind = np.random.randint(self.num_hardest_negatives, size=batch_size * num_samples)
-            hardest_negative_ind = hard[batch_size * num_samples * [True], ind]
-        else:
-            hardest_negative_ind = np.argmin(anchor_negative_dist, axis=1)
-
-        mask_anchor_positive = np.expand_dims(np.repeat(labels, num_samples), 0) \
-                               == np.expand_dims(np.repeat(labels, num_samples), 1)
-        mask_anchor_positive = mask_anchor_positive.astype(float)
-        anchor_positive_dist = mask_anchor_positive * distances
-
-        c =[]
-        rp = []
-        rn = []
-        hrds = []
-
-        if self.hardest_positives:
-
-            if self.semi_hard_negatives:
-                hardest_positive_ind = []
-                hardest_negative_ind = []
-                for p, n in zip(anchor_positive_dist, anchor_negative_dist):
-                    no_samples = True
-                    p_li = list(zip(p, np.arange(batch_size * num_samples), batch_size * num_samples * [True]))
-                    n_li = list(zip(n, np.arange(batch_size * num_samples), batch_size * num_samples * [False]))
-                    pn_li = sorted(p_li + n_li, key=lambda el: el[0])
-                    for i, x in enumerate(pn_li):
-                        if not x[2]:
-                            for y in pn_li[:i][::-1]:
-                                if y[2] and y[0] > 0.0:
-                                    assert (x[1] != y[1])
-                                    hardest_negative_ind.append(x[1])
-                                    hardest_positive_ind.append(y[1])
-                                    no_samples = False
-                                    break
-                        if not no_samples:
-                            break
-                    if no_samples:
-                        print("There is no negative examples with distances greater than positive examples distances.")
-                        exit(0)
-            else:
-                if self.num_hardest_negatives is not None:
-                    hard = np.argsort(anchor_positive_dist, axis=1)[:, -self.num_hardest_negatives:]
-                    ind = np.random.randint(self.num_hardest_negatives, size=batch_size * num_samples)
-                    hardest_positive_ind = hard[batch_size * num_samples * [True], ind]
-                else:
-                    hardest_positive_ind = np.argmax(anchor_positive_dist, axis=1)
-
-            for i in range(batch_size):
-                for j in range(num_samples):
-                    c.append(s[i*num_samples+j])
-                    rp.append(s[hardest_positive_ind[i*num_samples+j]])
-                    rn.append(s[hardest_negative_ind[i*num_samples+j]])
-
-        else:
-            if self.semi_hard_negatives:
-                for i in range(batch_size):
-                    for j in range(num_samples):
-                        for k in range(j+1, num_samples):
-                            c.append(s[i*num_samples+j])
-                            c.append(s[i*num_samples+k])
-                            rp.append(s[i*num_samples+k])
-                            rp.append(s[i*num_samples+j])
-                            n, hrd = self.get_semi_hard_negative_ind(i, j, k, distances,
-                                                                anchor_negative_dist,
-                                                                batch_size, num_samples)
-                            assert(n != i*num_samples+k)
-                            rn.append(s[n])
-                            hrds.append(hrd)
-                            n, hrd = self.get_semi_hard_negative_ind(i, k, j, distances,
-                                                                anchor_negative_dist,
-                                                                batch_size, num_samples)
-                            assert(n != i*num_samples+j)
-                            rn.append(s[n])
-                            hrds.append(hrd)
-            else:
-                for i in range(batch_size):
-                    for j in range(num_samples):
-                        for k in range(j + 1, num_samples):
-                            c.append(s[i * num_samples + j])
-                            c.append(s[i * num_samples + k])
-                            rp.append(s[i * num_samples + k])
-                            rp.append(s[i * num_samples + j])
-                            rn.append(s[hardest_negative_ind[i * num_samples + j]])
-                            rn.append(s[hardest_negative_ind[i * num_samples + k]])
-
-        triplets = list(zip(c, rp, rn))
-        np.random.shuffle(triplets)
-        c = [el[0] for el in triplets]
-        rp = [el[1] for el in triplets]
-        rn = [el[2] for el in triplets]
-        ratio = sum(hrds) / len(hrds)
-        print("Ratio of semi-hard negative samples is %f" % ratio)
-        return [(c, rp), (c, rn)]
-
-    def get_semi_hard_negative_ind(self, i, j, k, distances, anchor_negative_dist, batch_size, num_samples):
-        anc_pos_dist = distances[i * num_samples + j, i * num_samples + k]
-        neg_dists = anchor_negative_dist[i * num_samples + j]
-        n_li_pre = sorted(list(zip(neg_dists, np.arange(batch_size * num_samples))), key=lambda el: el[0])
-        n_li = list(filter(lambda x: x[1]<i*num_samples, n_li_pre)) + \
-               list(filter(lambda x: x[1]>=(i+1)*num_samples, n_li_pre))
-        for x in n_li:
-            if x[0] > anc_pos_dist :
-                return x[1], True
-        return random.choice(n_li)[1], False
+        self._net.train_on_batch(batch, y)
 
     def __call__(self, context, response, pos_pool, neg_pool):
         """Make a prediction on a batch."""

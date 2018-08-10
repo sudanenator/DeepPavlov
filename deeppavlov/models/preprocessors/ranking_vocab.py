@@ -27,21 +27,15 @@ log = get_logger(__name__)
 
 @register('ranking_vocab')
 class RankingVocab(Estimator):
-    # def __init__(self):
-    #     pass
-    #
-    # def __call__(self):
-    #     pass
-    #
-    # def fit(self):
-    #     pass
-    #
-    # def load(self):
-    #     pass
-    #
-    # def save(self):
-    #     pass
+    """
+    use_matrix: Whether to use trainable matrix with token (word) embeddings.
+    hard_triplets_sampling: Whether to use hard triplets sampling to train the model
+        i.e. to choose negative samples close to positive ones.
+    hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
+    semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
+        than positive samples or not.
 
+    """
 
     def __init__(self,
                  save_path: str,
@@ -58,8 +52,17 @@ class RankingVocab(Estimator):
                  char_dynamic_batch: bool = False,
                  update_embeddings: bool = False,
                  num_negative_samples: int = 10,
+                 pos_pool_sample: bool = False,
                  tokenizer: Callable = None,
                  seed: int = None,
+                 hard_triplets_sampling: bool = False,
+                 hardest_positives: bool = False,
+                 semi_hard_negatives: bool = False,
+                 num_hardest_negatives: int = None,
+                 embedder: Callable = "random",
+                 embedding_dim: int = 300,
+                 use_matrix: bool = False,
+                 triplet_mode: bool = True,
                  **kwargs):
 
         self.max_sequence_length = max_sequence_length
@@ -74,7 +77,16 @@ class RankingVocab(Estimator):
         self.char_dynamic_batch = char_dynamic_batch
         self.upd_embs = update_embeddings
         self.num_negative_samples = num_negative_samples
+        self.pos_pool_sample = pos_pool_sample
         self.tokenizer = tokenizer
+        self.hard_triplets_sampling = hard_triplets_sampling
+        self.hardest_positives = hardest_positives
+        self.semi_hard_negatives = semi_hard_negatives
+        self.num_hardest_negatives = num_hardest_negatives
+        self.embedder = embedder
+        self.embedding_dim = embedding_dim
+        self.use_matrix = use_matrix
+        self.triplet_mode = triplet_mode
 
         save_path = expand_path(save_path).resolve()
         load_path = expand_path(load_path).resolve()
@@ -103,6 +115,8 @@ class RankingVocab(Estimator):
 
         super().__init__(load_path=load_path, save_path=save_path, **kwargs)
 
+        if self.embedder == "random":
+            self.embeddings_model = dict()
 
     def fit(self, context, response, pos_pool, neg_pool):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
@@ -118,11 +132,15 @@ class RankingVocab(Estimator):
             neg_pool_tok = neg_pool
         self.build_int2tok_vocab(c_tok, r_tok, pos_pool_tok, neg_pool_tok)
         self.build_tok2int_vocab()
+
+        self.len_vocab = len(self.tok2int_vocab)
+
         self.build_context2toks_vocab(c_tok)
         self.build_response2toks_vocab(r_tok, pos_pool_tok, neg_pool_tok)
         if self.upd_embs:
             self.build_context2emb_vocab()
             self.build_response2emb_vocab()
+        self.build_emb_matrix()
 
     def load(self):
         log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
@@ -227,7 +245,13 @@ class RankingVocab(Estimator):
         else:
             npool = [self.make_ints(self.generate_items(el)) for el in pos_pool_tok]
 
-        return c, r, ppool, npool
+        if self.hard_triplets_sampling:
+            b = self.make_hard_triplets(x, y, self._net)
+            y = np.ones(len(b[0][0]))
+        else:
+            b = self.make_batch(c, r, ppool, npool)
+
+        return b
 
     def generate_items(self, pos_pool):
         candidates = []
@@ -365,3 +389,179 @@ class RankingVocab(Estimator):
         for i in range(response_embeddings_arr.shape[0]):
             self.response2emb_vocab[i] = response_embeddings_arr[i]
 
+    def make_batch(self, cont, resp, pos_pool, neg_pool):
+        if not self.use_matrix:
+            context = self.get_embs(cont)
+        if self.pos_pool_sample:
+            response = [random.choice(el) for el in pos_pool]
+        else:
+            response = resp
+        if not self.use_matrix:
+            response = self.get_embs(response)
+        if self.triplet_mode:
+            negative_response = [random.choice(el) for el in neg_pool]
+            if not self.use_matrix:
+                negative_response = self.get_embs(negative_response)
+            if self.hard_triplets_sampling:
+                positives = [random.choices(el, k=self.num_positive_samples) for el in pos_pool]
+                if not self.use_matrix:
+                    positives = [self.get_embs(el) for el in positives]
+                x = [(context, el) for el in zip(*positives)]
+            else:
+                x = [(context, response), (cont, negative_response)]
+        else:
+            x = [(context, response)]
+        return x
+
+    def make_hard_triplets(self, x, y, net):
+        samples = [[s[1] for s in el] for el in x]
+        labels = y
+        batch_size = len(samples)
+        num_samples = len(samples[0])
+        samp = [y for el in samples for y in el]
+        s = self.dict.make_ints(samp)
+
+        embeddings = net.predict_embedding([s, s], 512, type='context')
+        embeddings = embeddings / np.expand_dims(np.linalg.norm(embeddings, axis=1), axis=1)
+        dot_product = embeddings @ embeddings.T
+        square_norm = np.diag(dot_product)
+        distances = np.expand_dims(square_norm, 0) - 2.0 * dot_product + np.expand_dims(square_norm, 1)
+        distances = np.maximum(distances, 0.0)
+        distances = np.sqrt(distances)
+
+        mask_anchor_negative = np.expand_dims(np.repeat(labels, num_samples), 0)\
+                               != np.expand_dims(np.repeat(labels, num_samples), 1)
+        mask_anchor_negative = mask_anchor_negative.astype(float)
+        max_anchor_negative_dist = np.max(distances, axis=1, keepdims=True)
+        anchor_negative_dist = distances + max_anchor_negative_dist * (1.0 - mask_anchor_negative)
+        if self.num_hardest_negatives is not None:
+            hard = np.argsort(anchor_negative_dist, axis=1)[:, :self.num_hardest_negatives]
+            ind = np.random.randint(self.num_hardest_negatives, size=batch_size * num_samples)
+            hardest_negative_ind = hard[batch_size * num_samples * [True], ind]
+        else:
+            hardest_negative_ind = np.argmin(anchor_negative_dist, axis=1)
+
+        mask_anchor_positive = np.expand_dims(np.repeat(labels, num_samples), 0) \
+                               == np.expand_dims(np.repeat(labels, num_samples), 1)
+        mask_anchor_positive = mask_anchor_positive.astype(float)
+        anchor_positive_dist = mask_anchor_positive * distances
+
+        c =[]
+        rp = []
+        rn = []
+        hrds = []
+
+        if self.hardest_positives:
+
+            if self.semi_hard_negatives:
+                hardest_positive_ind = []
+                hardest_negative_ind = []
+                for p, n in zip(anchor_positive_dist, anchor_negative_dist):
+                    no_samples = True
+                    p_li = list(zip(p, np.arange(batch_size * num_samples), batch_size * num_samples * [True]))
+                    n_li = list(zip(n, np.arange(batch_size * num_samples), batch_size * num_samples * [False]))
+                    pn_li = sorted(p_li + n_li, key=lambda el: el[0])
+                    for i, x in enumerate(pn_li):
+                        if not x[2]:
+                            for y in pn_li[:i][::-1]:
+                                if y[2] and y[0] > 0.0:
+                                    assert (x[1] != y[1])
+                                    hardest_negative_ind.append(x[1])
+                                    hardest_positive_ind.append(y[1])
+                                    no_samples = False
+                                    break
+                        if not no_samples:
+                            break
+                    if no_samples:
+                        print("There is no negative examples with distances greater than positive examples distances.")
+                        exit(0)
+            else:
+                if self.num_hardest_negatives is not None:
+                    hard = np.argsort(anchor_positive_dist, axis=1)[:, -self.num_hardest_negatives:]
+                    ind = np.random.randint(self.num_hardest_negatives, size=batch_size * num_samples)
+                    hardest_positive_ind = hard[batch_size * num_samples * [True], ind]
+                else:
+                    hardest_positive_ind = np.argmax(anchor_positive_dist, axis=1)
+
+            for i in range(batch_size):
+                for j in range(num_samples):
+                    c.append(s[i*num_samples+j])
+                    rp.append(s[hardest_positive_ind[i*num_samples+j]])
+                    rn.append(s[hardest_negative_ind[i*num_samples+j]])
+
+        else:
+            if self.semi_hard_negatives:
+                for i in range(batch_size):
+                    for j in range(num_samples):
+                        for k in range(j+1, num_samples):
+                            c.append(s[i*num_samples+j])
+                            c.append(s[i*num_samples+k])
+                            rp.append(s[i*num_samples+k])
+                            rp.append(s[i*num_samples+j])
+                            n, hrd = self.get_semi_hard_negative_ind(i, j, k, distances,
+                                                                anchor_negative_dist,
+                                                                batch_size, num_samples)
+                            assert(n != i*num_samples+k)
+                            rn.append(s[n])
+                            hrds.append(hrd)
+                            n, hrd = self.get_semi_hard_negative_ind(i, k, j, distances,
+                                                                anchor_negative_dist,
+                                                                batch_size, num_samples)
+                            assert(n != i*num_samples+j)
+                            rn.append(s[n])
+                            hrds.append(hrd)
+            else:
+                for i in range(batch_size):
+                    for j in range(num_samples):
+                        for k in range(j + 1, num_samples):
+                            c.append(s[i * num_samples + j])
+                            c.append(s[i * num_samples + k])
+                            rp.append(s[i * num_samples + k])
+                            rp.append(s[i * num_samples + j])
+                            rn.append(s[hardest_negative_ind[i * num_samples + j]])
+                            rn.append(s[hardest_negative_ind[i * num_samples + k]])
+
+        triplets = list(zip(c, rp, rn))
+        np.random.shuffle(triplets)
+        c = [el[0] for el in triplets]
+        rp = [el[1] for el in triplets]
+        rn = [el[2] for el in triplets]
+        ratio = sum(hrds) / len(hrds)
+        print("Ratio of semi-hard negative samples is %f" % ratio)
+        return [(c, rp), (c, rn)]
+
+    def get_semi_hard_negative_ind(self, i, j, k, distances, anchor_negative_dist, batch_size, num_samples):
+        anc_pos_dist = distances[i * num_samples + j, i * num_samples + k]
+        neg_dists = anchor_negative_dist[i * num_samples + j]
+        n_li_pre = sorted(list(zip(neg_dists, np.arange(batch_size * num_samples))), key=lambda el: el[0])
+        n_li = list(filter(lambda x: x[1]<i*num_samples, n_li_pre)) + \
+               list(filter(lambda x: x[1]>=(i+1)*num_samples, n_li_pre))
+        for x in n_li:
+            if x[0] > anc_pos_dist :
+                return x[1], True
+        return random.choice(n_li)[1], False
+
+    def build_emb_matrix(self):
+        self.emb_matrix = np.zeros((len(self.tok2int_vocab), self.embedding_dim))
+        for tok, i in self.tok2int_vocab.items():
+            if tok == '<UNK>':
+                self.emb_matrix[i] = np.random.uniform(-0.6, 0.6, self.embedding_dim)
+            else:
+                try:
+                    self.emb_matrix[i] = self.embeddings_model[tok]
+                except:
+                    self.emb_matrix[i] = np.random.uniform(-0.6, 0.6, self.embedding_dim)
+        del self.embeddings_model
+
+    def get_embs(self, ints):
+        embs = []
+        for el in ints:
+            emb = []
+            for int_tok in el:
+                assert type(int_tok) != int
+                emb.append(self.emb_matrix[int_tok])
+            emb = np.vstack(emb)
+            embs.append(emb)
+        embs = [np.expand_dims(el, axis=0) for el in embs]
+        embs = np.vstack(embs)
+        return embs

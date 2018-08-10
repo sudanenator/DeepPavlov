@@ -12,7 +12,6 @@ from deeppavlov.core.models.tf_backend import TfModelMeta
 from deeppavlov.core.common.log import get_logger
 from deeppavlov.core.layers import keras_layers
 from pathlib import Path
-from deeppavlov.models.ranking.emb_dict import EmbDict
 
 log = get_logger(__name__)
 
@@ -36,7 +35,6 @@ class RankingNetwork(metaclass=TfModelMeta):
             Possible values are ``cos_similarity`` (cosine similarity), ``euqlidian`` (euqlidian distance),
             ``sigmoid`` (1 minus sigmoid).
         token_embeddings: Whether to use token (word) embeddings in the model.
-        use_matrix: Whether to use trainable matrix with token (word) embeddings.
         max_sequence_length: A maximum length of a sequence in tokens.
             Longer sequences will be truncated and shorter ones will be padded.
         tok_dynamic_batch:  Whether to use dynamic batching. If ``True``, a maximum length of a sequence for a batch
@@ -60,7 +58,6 @@ class RankingNetwork(metaclass=TfModelMeta):
     def __init__(self,
                  toks_num: int,
                  chars_num: int,
-                 emb_dict: EmbDict,
                  max_sequence_length: int,
                  max_token_length: int = None,
                  learning_rate: float = 1e-3,
@@ -84,7 +81,6 @@ class RankingNetwork(metaclass=TfModelMeta):
 
         self.distance = distance
         self.toks_num = toks_num
-        self.emb_dict = emb_dict
         self.use_matrix = use_matrix
         self.seed = seed
         self.hidden_dim = hidden_dim
@@ -157,7 +153,7 @@ class RankingNetwork(metaclass=TfModelMeta):
         self.obj_model.save_weights(path)
         self.context_embedding.save(str(Path(path).parent / 'sen_emb_model.h5'))
 
-    def init_from_scratch(self, emb_matrix):
+    def init_from_scratch(self, emb_matrix=None):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
         if self.token_embeddings and not self.char_embeddings:
             if self.use_matrix:
@@ -351,13 +347,10 @@ class RankingNetwork(metaclass=TfModelMeta):
         return dist
 
     def train_on_batch(self, batch, y):
-        batch = [x for el in batch for x in el]
+        b = [x for el in batch for x in el]
         if self.token_embeddings and not self.char_embeddings:
-            if self.use_matrix:
-                self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
-            else:
-                b = [self.emb_dict.get_embs(el) for el in batch]
-                self.obj_model.train_on_batch(x=b, y=np.asarray(y))
+            # self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
+            self.obj_model.train_on_batch(x=b, y=np.asarray(y))
         elif not self.token_embeddings and self.char_embeddings:
             self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
         elif self.token_embeddings and self.char_embeddings:
@@ -371,11 +364,7 @@ class RankingNetwork(metaclass=TfModelMeta):
 
     def predict_score_on_batch(self, batch):
         if self.token_embeddings and not self.char_embeddings:
-            if self.use_matrix:
-                return self.score_model.predict_on_batch(x=batch)
-            else:
-                b = [self.emb_dict.get_embs(el) for el in batch]
-                return self.score_model.predict_on_batch(x=b)
+            return self.score_model.predict_on_batch(x=batch)
         elif not self.token_embeddings and self.char_embeddings:
             return self.score_model.predict_on_batch(x=batch)
         elif self.token_embeddings and self.char_embeddings:
@@ -392,11 +381,7 @@ class RankingNetwork(metaclass=TfModelMeta):
         elif type == 'response':
             embedding = self.response_embedding
         if self.token_embeddings and not self.char_embeddings:
-            if self.use_matrix:
-                return embedding.predict_on_batch(x=batch)
-            else:
-                b = [self.emb_dict.get_embs(el) for el in batch]
-                return embedding.predict_on_batch(x=b)
+            return embedding.predict_on_batch(x=batch)
         elif not self.token_embeddings and self.char_embeddings:
             return embedding.predict_on_batch(x=batch)
         elif self.token_embeddings and self.char_embeddings:
