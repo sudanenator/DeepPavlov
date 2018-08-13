@@ -22,7 +22,7 @@ def r_at_10(labels, predictions):
     return recall_at_k(labels, predictions, k=10)
 
 def recall_at_k(y_true, y_pred, k):
-    labels = np.array(y_true)
+    labels = np.repeat(np.expand_dims(np.asarray(y_true), axis=1), k, axis=1)
     predictions = np.array(y_pred)
     predictions = np.argsort(predictions, -1)[:, :k]
     flags = np.zeros_like(predictions)
@@ -35,8 +35,8 @@ def recall_at_k(y_true, y_pred, k):
 
 @register_metric('rank_response')
 def rank_response(y_true, y_pred):
-    labels = np.array(y_true)
     predictions = np.array(y_pred)
+    labels = np.repeat(np.expand_dims(np.asarray(y_true), axis=1), predictions.shape[1], axis=1)
     predictions = np.argsort(predictions, -1)
     ranks = []
     for i in range(predictions.shape[0]):

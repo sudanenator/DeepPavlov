@@ -51,6 +51,7 @@ class RankingModel(NNModel):
 
     def __init__(self,
                  len_vocab: int,
+                 len_char_vocab: int,
                  update_embeddings: bool = False,
                  interact_pred_num: int = 3,
                  pos_pool_sample: bool = False,
@@ -73,6 +74,7 @@ class RankingModel(NNModel):
         self.pos_pool_sample = pos_pool_sample
         self.triplet_mode = triplet_mode
         self.len_vocab = len_vocab
+        self.len_char_vocab = len_char_vocab
 
         opt = deepcopy(kwargs)
 
@@ -106,12 +108,12 @@ class RankingModel(NNModel):
         else:
             log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
             # self.embdict.load()
-            if hasattr(self.dict, 'char2int_vocab'):
-                chars_num = len(self.dict.char2int_vocab)
-            else:
-                chars_num = 0
-            self._net = RankingNetwork(chars_num=chars_num,
-                                       toks_num=len(self.dict.tok2int_vocab),
+            # if hasattr(self.dict, 'char2int_vocab'):
+            #     chars_num = len(self.dict.char2int_vocab)
+            # else:
+            #     chars_num = 0
+            self._net = RankingNetwork(chars_num=self.len_char_vocab,
+                                       toks_num=self.len_vocab,
                                        **self.network_parameters)
             self._net.load(self.load_path)
 
@@ -129,20 +131,23 @@ class RankingModel(NNModel):
         """Train the model on a batch."""
         if self.upd_embs:
             self.reset_embeddings()
-        self._net.train_on_batch(batch, y)
+        b  = [el[0] for el in batch]
+        b = self.make_batch(b)
+        self._net.train_on_batch(b, y)
 
-    def __call__(self, context, response, pos_pool, neg_pool):
+    def __call__(self, batch):
         """Make a prediction on a batch."""
-        if isinstance(context, list):
+        if len(batch) > 1:
             y_pred = []
-            b = self.make_batch(context, response, pos_pool, neg_pool)
+            b = [el[1] for el in batch]
+            b = self.make_batch(b)
             for el in b:
                 yp = self._net.predict_score_on_batch(el)
                 y_pred.append(yp)
             y_pred = np.hstack(y_pred)
             return y_pred
 
-        elif isinstance(context, str):
+        else:
             c_input = tokenize(batch)
             c_input = self.dict.make_ints(c_input)
             c_input_emb = self._net.predict_embedding_on_batch([c_input, c_input], type='context')
@@ -195,6 +200,17 @@ class RankingModel(NNModel):
     def reset(self):
         pass
 
+    def make_batch(self, x):
+        sample_len = len(x[0])
+        b = []
+        for i in range(sample_len):
+            c = []
+            r = []
+            for el in x:
+                c.append(el[i][0])
+                r.append(el[i][1])
+            b.append([np.asarray(c), np.asarray(r)])
+        return b
 
 def tokenize(sen_list):
     sen_tokens_list = []

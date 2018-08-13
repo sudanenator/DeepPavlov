@@ -23,7 +23,7 @@
         "name": "ranking_vocab",
         "save_path": "vocabs/",
         "load_path": "vocabs/",
-        "num_negative_samples": 500,
+        "num_negative_samples": 5,
         "max_sequence_length": 200,
         "tokenizer": {"name": "split_tokenizer"},
         "embedder": "random",
@@ -35,6 +35,7 @@
         "in": ["x"],
         "in_y": ["y"],
         "len_vocab": "#insurance_vocab.len_vocab",
+        "len_char_vocab": "#insurance_vocab.len_char_vocab",
         "out": ["y_predicted"],
         "name": "ranking_model",
         "device_num": 0,
@@ -62,11 +63,13 @@
   },
   "train": {
     "epochs": 200,
-    "batch_size": 256,
+    "batch_size": 64,
     "pytest_max_batches": 2,
     "metrics": ["r@1", "rank_response", "loss"],
     "validation_patience": 5,
-    "val_every_n_epochs": 10
+    "val_every_n_epochs": 10,
+    "log_every_n_batches": 1
+
   },
   "metadata": {
     "requirements": [

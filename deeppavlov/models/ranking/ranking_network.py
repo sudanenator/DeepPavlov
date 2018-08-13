@@ -57,8 +57,8 @@ class RankingNetwork(metaclass=TfModelMeta):
 
     def __init__(self,
                  toks_num: int,
-                 chars_num: int,
                  max_sequence_length: int,
+                 chars_num: int = None,
                  max_token_length: int = None,
                  learning_rate: float = 1e-3,
                  device_num: int = 0,
@@ -351,8 +351,7 @@ class RankingNetwork(metaclass=TfModelMeta):
         if self.token_embeddings and not self.char_embeddings:
             # self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
             self.obj_model.train_on_batch(x=b, y=np.asarray(y))
-        elif not self.token_embeddings and self.char_embeddings:
-            self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
+        elif not self.token_embeddings and self.char_embeddings:self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
         elif self.token_embeddings and self.char_embeddings:
             if self.use_matrix:
                 self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))

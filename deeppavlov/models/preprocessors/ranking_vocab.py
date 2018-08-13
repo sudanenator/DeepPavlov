@@ -17,6 +17,7 @@ from deeppavlov.core.commands.utils import expand_path
 from keras.preprocessing.sequence import pad_sequences
 from deeppavlov.core.common.log import get_logger
 import random
+import copy
 
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.estimator import Estimator
@@ -34,6 +35,9 @@ class RankingVocab(Estimator):
     hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
     semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
         than positive samples or not.
+    pos_pool_rank: Whether to count samples from the whole `pos_pool` as correct answers in test / validation mode.
+    pos_pool_sample: Whether to sample response from `pos_pool` each time when the batch is generated.
+        If ``False``, the response from `response` will be used.
 
     """
 
@@ -51,8 +55,10 @@ class RankingVocab(Estimator):
                  tok_dynamic_batch: bool = False,
                  char_dynamic_batch: bool = False,
                  update_embeddings: bool = False,
-                 num_negative_samples: int = 10,
+                 num_negative_samples: int = None,
+                 num_ranking_samples_test: int = 10,
                  pos_pool_sample: bool = False,
+                 pos_pool_rank: bool = True,
                  tokenizer: Callable = None,
                  seed: int = None,
                  hard_triplets_sampling: bool = False,
@@ -77,7 +83,9 @@ class RankingVocab(Estimator):
         self.char_dynamic_batch = char_dynamic_batch
         self.upd_embs = update_embeddings
         self.num_negative_samples = num_negative_samples
+        self.num_ranking_samples_test = num_ranking_samples_test
         self.pos_pool_sample = pos_pool_sample
+        self.pos_pool_rank = pos_pool_rank
         self.tokenizer = tokenizer
         self.hard_triplets_sampling = hard_triplets_sampling
         self.hardest_positives = hardest_positives
@@ -104,6 +112,8 @@ class RankingVocab(Estimator):
         self.remb_save_path = str(save_path / "response_embs.npy")
         self.remb_load_path = str(load_path / "response_embs.npy")
 
+        self.char2int_vocab = {}
+        self.int2char_vocab = {}
         self.int2tok_vocab = {}
         self.tok2int_vocab = {}
         self.response2toks_vocab = {}
@@ -134,6 +144,7 @@ class RankingVocab(Estimator):
         self.build_tok2int_vocab()
 
         self.len_vocab = len(self.tok2int_vocab)
+        self.len_char_vocab = len(self.char2int_vocab)
 
         self.build_context2toks_vocab(c_tok)
         self.build_response2toks_vocab(r_tok, pos_pool_tok, neg_pool_tok)
@@ -154,6 +165,9 @@ class RankingVocab(Estimator):
         if self.upd_embs:
             self.load_cont()
             self.load_resp()
+
+        self.len_vocab = len(self.tok2int_vocab)
+        self.len_char_vocab = len(self.char2int_vocab)
 
     def save(self):
         log.info("[saving `{}`]".format(self.__class__.__name__))
@@ -239,7 +253,7 @@ class RankingVocab(Estimator):
             neg_pool_tok = neg_pool
         c = [el for el in self.make_ints(c_tok)]
         r = [el for el in self.make_ints(r_tok)]
-        ppool = [self.make_ints(el) for el in pos_pool]
+        ppool = [self.make_ints(el) for el in pos_pool_tok]
         if neg_pool[0] is not None:
             npool =[self.make_ints(el) for el in neg_pool_tok]
         else:
@@ -255,7 +269,7 @@ class RankingVocab(Estimator):
 
     def generate_items(self, pos_pool):
         candidates = []
-        for i in range(self.num_negative_samples):
+        for i in range(self.num_negative_samples-1):
             candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
             while candidate in pos_pool:
                 candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
@@ -391,27 +405,60 @@ class RankingVocab(Estimator):
 
     def make_batch(self, cont, resp, pos_pool, neg_pool):
         if not self.use_matrix:
-            context = self.get_embs(cont)
+            context_emb = self.get_embs(cont)
+        else:
+            context_emb = cont
+
         if self.pos_pool_sample:
             response = [random.choice(el) for el in pos_pool]
         else:
             response = resp
-        if not self.use_matrix:
-            response = self.get_embs(response)
+        if self.use_matrix:
+            response_emb = response
+        else:
+            response_emb = self.get_embs(response)
         if self.triplet_mode:
             negative_response = [random.choice(el) for el in neg_pool]
-            if not self.use_matrix:
-                negative_response = self.get_embs(negative_response)
+            if self.use_matrix:
+                negative_response_emb = negative_response
+            else:
+                negative_response_emb = self.get_embs(negative_response)
             if self.hard_triplets_sampling:
                 positives = [random.choices(el, k=self.num_positive_samples) for el in pos_pool]
-                if not self.use_matrix:
-                    positives = [self.get_embs(el) for el in positives]
-                x = [(context, el) for el in zip(*positives)]
+                if self.use_matrix:
+                    positives_emb = positives
+                else:
+                    positives_emb = [self.get_embs(el) for el in positives]
+                x = [[(el[0], x) for x in el[1:]] for el in zip(context_emb, *positives_emb)]
             else:
-                x = [(context, response), (cont, negative_response)]
+                # x = [(context, response), (context, negative_response)]
+                train = [[(el[0], el[1]), (el[0], el[2])]
+                         for el in zip(context_emb, response_emb, negative_response_emb)]
         else:
-            x = [(context, response)]
+            # x = [(context, response)]
+            train = [[(el[0], el[1])] for el in zip(context_emb, response_emb)]
+        rank_pool = []
+        for i in range(len(context_emb)):
+            if self.pos_pool_rank:
+                ppool = list(copy.copy(pos_pool[i]))
+                ppool.insert(0, ppool.pop(self.get_index(ppool, response[i])))
+                rank_pool.append(ppool + [el for el in neg_pool[i][:1 - len(ppool)]])
+            else:
+                rank_pool.append([response[i]] + neg_pool[i])
+        if self.use_matrix:
+            rank_pool_emb = rank_pool
+        else:
+            rank_pool_emb = [self.get_embs(el) for el in rank_pool]
+        test = []
+        for i in range(len(context_emb)):
+            test.append([(context_emb[i], el) for el in rank_pool_emb[i]])
+        x = list(zip(train, test))
         return x
+
+    def get_index(self, a, b):
+        for i, el in enumerate(a):
+            if np.array_equal(el, b):
+                return i
 
     def make_hard_triplets(self, x, y, net):
         samples = [[s[1] for s in el] for el in x]
@@ -537,7 +584,7 @@ class RankingVocab(Estimator):
         n_li = list(filter(lambda x: x[1]<i*num_samples, n_li_pre)) + \
                list(filter(lambda x: x[1]>=(i+1)*num_samples, n_li_pre))
         for x in n_li:
-            if x[0] > anc_pos_dist :
+            if x[0] > anc_pos_dist:
                 return x[1], True
         return random.choice(n_li)[1], False
 
@@ -563,5 +610,5 @@ class RankingVocab(Estimator):
             emb = np.vstack(emb)
             embs.append(emb)
         embs = [np.expand_dims(el, axis=0) for el in embs]
-        embs = np.vstack(embs)
+        # embs = np.vstack(embs)
         return embs

@@ -56,9 +56,6 @@ class RankingIterator(DataLearningIterator):
         seed: Random seed.
         shuffle: Whether to shuffle data.
         len_vocab: A length of a vocabulary to perform sampling in training, validation and test mode.
-        pos_pool_sample: Whether to sample response from `pos_pool` each time when the batch is generated.
-            If ``False``, the response from `response` will be used.
-        pos_pool_rank: Whether to count samples from the whole `pos_pool` as correct answers in test / validation mode.
         random_batches: Whether to choose batches randomly or iterate over data sequentally in training mode.
         batches_per_epoch: A number of batches to choose per each epoch in training mode.
             Only required if ``random_batches`` is set to ``True``.
@@ -77,7 +74,6 @@ class RankingIterator(DataLearningIterator):
                  seed: int = None,
                  shuffle: bool = False,
                  len_vocab: int = 0,
-                 pos_pool_rank: bool = True,
                  random_batches: bool = False,
                  batches_per_epoch: int = None,
                  num_positive_samples: int = 5):
@@ -89,7 +85,6 @@ class RankingIterator(DataLearningIterator):
         self.num_ranking_samples_valid = num_ranking_samples_valid
         self.num_ranking_samples_test = num_ranking_samples_test
         self.len_vocab = len_vocab
-        self.pos_pool_rank = pos_pool_rank
         self.random_batches = random_batches
         self.batches_per_epoch = batches_per_epoch
         self.num_positive_samples = num_positive_samples
