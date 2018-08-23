@@ -225,9 +225,10 @@ class NerNetwork(TFModel):
                     units = variational_dropout(units, self._dropout_ph)
             return units
 
-    def _build_rnn(self, units, n_hidden_list, cell_type, intra_layer_dropout):
+    def _build_rnn(self, units, n_hidden_list, cell_type, intra_layer_dropout, mask):
+        seq_lengths = tf.to_int32(tf.reduce_sum(mask, axis=1))
         for n, n_hidden in enumerate(n_hidden_list):
-            units, _ = bi_rnn(units, n_hidden, cell_type=cell_type, name='Layer_' + str(n))
+            units, _ = bi_rnn(units, n_hidden, cell_type, seq_lengths, name='Layer_' + str(n))
             units = tf.concat(units, -1)
             if intra_layer_dropout and n != len(n_hidden_list) - 1:
                 units = variational_dropout(units, self._dropout_ph)
@@ -267,8 +268,8 @@ class NerNetwork(TFModel):
         if l2_reg > 0:
             loss += l2_reg * tf.reduce_sum(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
 
-        # optimizer = partial(tf.train.MomentumOptimizer, momentum=0.9, use_nesterov=True)
-        optimizer = tf.train.AdamOptimizer
+        optimizer = partial(tf.train.MomentumOptimizer, momentum=0.9, use_nesterov=True)
+        # optimizer = tf.train.AdamOptimizer
         train_op = self.get_train_op(loss, self.learning_rate_ph, optimizer, clip_norm=clip_grad_norm)
         return train_op, loss
 
@@ -313,6 +314,15 @@ class NerNetwork(TFModel):
         return feed_dict
 
     def __call__(self, *args, **kwargs):
+        """
+
+        Args:
+            *args:
+            **kwargs:
+
+        Returns:
+
+        """
         if len(args[0]) == 0 or (len(args[0]) == 1 and len(args[0][0]) == 0):
             return []
         return self.predict(args)
