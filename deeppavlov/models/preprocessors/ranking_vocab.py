@@ -269,7 +269,7 @@ class RankingVocab(Estimator):
 
     def generate_items(self, pos_pool):
         candidates = []
-        for i in range(self.num_negative_samples-1):
+        for i in range(self.num_negative_samples):
             candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
             while candidate in pos_pool:
                 candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
@@ -404,11 +404,10 @@ class RankingVocab(Estimator):
             self.response2emb_vocab[i] = response_embeddings_arr[i]
 
     def make_batch(self, cont, resp, pos_pool, neg_pool):
-        if not self.use_matrix:
-            context_emb = self.get_embs(cont)
-        else:
+        if self.use_matrix:
             context_emb = cont
-
+        else:
+            context_emb = self.get_embs(cont)
         if self.pos_pool_sample:
             response = [random.choice(el) for el in pos_pool]
         else:
@@ -442,9 +441,10 @@ class RankingVocab(Estimator):
             if self.pos_pool_rank:
                 ppool = list(copy.copy(pos_pool[i]))
                 ppool.insert(0, ppool.pop(self.get_index(ppool, response[i])))
-                rank_pool.append(ppool + [el for el in neg_pool[i][:1 - len(ppool)]])
+                rank_pool.append(ppool + list(neg_pool[i][:-len(ppool)]))
             else:
                 rank_pool.append([response[i]] + neg_pool[i])
+        assert(len(rank_pool[-1]) == self.num_negative_samples)
         if self.use_matrix:
             rank_pool_emb = rank_pool
         else:
@@ -609,6 +609,6 @@ class RankingVocab(Estimator):
                 emb.append(self.emb_matrix[int_tok])
             emb = np.vstack(emb)
             embs.append(emb)
-        embs = [np.expand_dims(el, axis=0) for el in embs]
+        # embs = [np.expand_dims(el, axis=0) for el in embs]
         # embs = np.vstack(embs)
         return embs

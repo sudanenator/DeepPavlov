@@ -23,7 +23,7 @@
         "name": "ranking_vocab",
         "save_path": "vocabs/",
         "load_path": "vocabs/",
-        "num_negative_samples": 5,
+        "num_negative_samples": 6,
         "max_sequence_length": 200,
         "tokenizer": {"name": "split_tokenizer"},
         "embedder": "random",
