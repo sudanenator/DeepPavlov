@@ -17,10 +17,7 @@ limitations under the License.
 from overrides import overrides
 from copy import deepcopy
 import inspect
-from functools import reduce
-import operator
 import numpy as np
-import random
 from nltk.tokenize import sent_tokenize, word_tokenize
 
 from deeppavlov.core.common.attributes import check_attr_true
@@ -29,7 +26,6 @@ from deeppavlov.core.models.nn_model import NNModel
 from deeppavlov.models.ranking.ranking_network import RankingNetwork
 from deeppavlov.core.common.log import get_logger
 from typing import Union, List, Tuple, Dict
-import random
 
 log = get_logger(__name__)
 
@@ -39,24 +35,20 @@ class RankingModel(NNModel):
     """Class to perform ranking.
 
     Args:
-        vocab_name: A key word that indicates which subclass
-            of the :class:`deeppavlov.models.ranking.ranking_dict.RankingDict` to use.
-        update_embeddings: Whether to store and update context and response embeddings or not.
         interact_pred_num: The number of the most relevant contexts and responses
             which model returns in the `interact` regime.
         triplet_mode: Whether to use a model with triplet loss.
             If ``False``, a model with crossentropy loss will be used.
+        update_embeddings: Whether to store and update context and response embeddings or not.
         **kwargs: Other parameters.
     """
 
     def __init__(self,
                  len_vocab: int,
                  len_char_vocab: int,
-                 update_embeddings: bool = False,
                  interact_pred_num: int = 3,
-                 pos_pool_sample: bool = False,
-                 seed: int = None,
                  triplet_mode: bool = True,
+                 update_embeddings: bool = False,
                  **kwargs):
 
         # Parameters for parent classes
@@ -68,11 +60,10 @@ class RankingModel(NNModel):
         super().__init__(save_path=save_path, load_path=load_path,
                          train_now=train_now, mode=mode)
 
-        self.upd_embs = update_embeddings
         self.interact_pred_num = interact_pred_num
         self.train_now = train_now
-        self.pos_pool_sample = pos_pool_sample
         self.triplet_mode = triplet_mode
+        self.upd_embs = update_embeddings
         self.len_vocab = len_vocab
         self.len_char_vocab = len_char_vocab
 
@@ -86,42 +77,19 @@ class RankingModel(NNModel):
         train_parameters_names = list(inspect.signature(self._net.train_on_batch).parameters)
         self.train_parameters = {par: opt[par] for par in train_parameters_names if par in opt}
 
-        random.seed(seed)
 
     @overrides
     def load(self):
-        """Load the model from the last checkpoint."""
-        if not self.load_path.exists():
-            log.info("[initializing new `{}`]".format(self.__class__.__name__))
-            # self.embdict.init_from_scratch(self.tok2int_vocab)
-            # if hasattr(self.dict, 'char2int_vocab'):
-            #     chars_num = len(self.dict.char2int_vocab)
-            # else:
-            #     chars_num = 0
-
-            chars_num = 0
-            self._net = RankingNetwork(chars_num=chars_num,
-                                       toks_num=self.len_vocab,
-                                       **self.network_parameters)
-            # self._net.init_from_scratch(self.embdict.emb_matrix)
-            self._net.init_from_scratch()
-        else:
-            log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
-            # self.embdict.load()
-            # if hasattr(self.dict, 'char2int_vocab'):
-            #     chars_num = len(self.dict.char2int_vocab)
-            # else:
-            #     chars_num = 0
-            self._net = RankingNetwork(chars_num=self.len_char_vocab,
-                                       toks_num=self.len_vocab,
-                                       **self.network_parameters)
-            self._net.load(self.load_path)
+        """Load the model from the last checkpoint if it exists. Otherwise instantiate a new model."""
+        self._net = RankingNetwork(chars_num=self.len_char_vocab,
+                                   toks_num=self.len_vocab,
+                                   **self.network_parameters)
 
     @overrides
     def save(self):
         """Save the model."""
         log.info('[saving model to {}]'.format(self.save_path.resolve()))
-        self._net.save(self.save_path)
+        self._net.save()
         if self.upd_embs:
             self.set_embeddings()
         # self.embdict.save()

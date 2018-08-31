@@ -41,53 +41,22 @@ class RankingIterator(DataLearningIterator):
     Args:
         data: A dictionary containing training, validation and test parts of the dataset obtainable via
             ``train``, ``valid`` and ``test`` keys.
-        sample_candidates_pool: Whether to sample candidates from  a predefined pool of candidates
-            for each sample in training mode. If ``False``, negative sampling from the whole data will be performed.
-        sample_candidates_pool_valid: Whether to validate a model on a predefined pool of candidates for each sample.
-            If ``False``, sampling from the whole data will be performed for validation.
-        sample_candidates_pool_test: Whether to test a model on a predefined pool of candidates for each sample.
-            If ``False``, sampling from the whole data will be performed for test.
-        num_negative_samples: A size of a predefined pool of candidates
-            or a size of data subsample from the whole data in training mode.
-        num_ranking_samples_valid: A size of a predefined pool of candidates
-            or a size of data subsample from the whole data in validation mode.
-        num_ranking_samples_test: A size of a predefined pool of candidates
-            or a size of data subsample from the whole data in test mode.
         seed: Random seed.
         shuffle: Whether to shuffle data.
-        len_vocab: A length of a vocabulary to perform sampling in training, validation and test mode.
         random_batches: Whether to choose batches randomly or iterate over data sequentally in training mode.
         batches_per_epoch: A number of batches to choose per each epoch in training mode.
             Only required if ``random_batches`` is set to ``True``.
-        num_positive_samples: A number of contexts to choose from `pos_pool` for each `context`.
-            Only required if ``hard_triplets_sampling`` is set to ``True``.
     """
 
     def __init__(self,
                  data: Dict[str, List],
-                 sample_candidates_pool: bool = False,
-                 sample_candidates_pool_valid: bool = True,
-                 sample_candidates_pool_test: bool = True,
-                 num_negative_samples: int = 10,
-                 num_ranking_samples_valid: int = 10,
-                 num_ranking_samples_test: int = 10,
                  seed: int = None,
                  shuffle: bool = False,
-                 len_vocab: int = 0,
                  random_batches: bool = False,
-                 batches_per_epoch: int = None,
-                 num_positive_samples: int = 5):
+                 batches_per_epoch: int = None):
 
-        self.sample_candidates_pool = sample_candidates_pool
-        self.sample_candidates_pool_valid = sample_candidates_pool_valid
-        self.sample_candidates_pool_test = sample_candidates_pool_test
-        self.num_negative_samples = num_negative_samples
-        self.num_ranking_samples_valid = num_ranking_samples_valid
-        self.num_ranking_samples_test = num_ranking_samples_test
-        self.len_vocab = len_vocab
         self.random_batches = random_batches
         self.batches_per_epoch = batches_per_epoch
-        self.num_positive_samples = num_positive_samples
 
         np.random.seed(seed)
         self.train = data.get('train', [])
@@ -132,27 +101,6 @@ class RankingIterator(DataLearningIterator):
                     context_response_data = np.random.choice(data, size=batch_size, replace=False)
                 else:
                     context_response_data = data[i * batch_size:(i + 1) * batch_size]
-                # context = [el["context"] for el in context_response_data]
-                # if self.pos_pool_sample:
-                #     response = [random.choice(el["pos_pool"]) for el in context_response_data]
-                # else:
-                #     response = [el["response"] for el in context_response_data]
-                # if self.triplet_mode:
-                #     negative_response = self._create_neg_resp_rand(context_response_data, batch_size)
-                #     if self.hard_triplets_sampling:
-                #         labels = [el["label"] for el in context_response_data]
-                #         positives = [random.choices(el["pos_pool"], k=self.num_positive_samples)
-                #                      for el in context_response_data]
-                #         x = [[(context[i], el) for el in positives[i]] for i in range(len(context_response_data))]
-                #         y = labels
-                #     else:
-                #         x = [[(context[i], el) for el in [response[i]] + [negative_response[i]]]
-                #              for i in range(len(context_response_data))]
-                #         y = batch_size * [np.ones(2)]
-                # else:
-                #     y = [el["label"] for el in context_response_data]
-                #     x = [[(context[i], response[i])] for i in range(len(context_response_data))]
-                # yield (x, y)
                 yield tuple(zip(*context_response_data))
         if data_type in ["valid", "test"]:
             for i in range(num_steps + 1):
@@ -161,70 +109,4 @@ class RankingIterator(DataLearningIterator):
                 else:
                     if len(data[i * batch_size:len(data)]) > 0:
                         context_response_data = data[i * batch_size:len(data)]
-                # context = [el["context"] for el in context_response_data]
-                # if data_type == "valid":
-                #     ranking_length = self.num_ranking_samples_valid
-                #     sample_candidates_pool = self.sample_candidates_pool_valid
-                # elif data_type == "test":
-                #     ranking_length = self.num_ranking_samples_test
-                #     sample_candidates_pool = self.sample_candidates_pool_test
-                # if not sample_candidates_pool:
-                #     ranking_length = self.len_vocab
-                # response_data = self._create_rank_resp(context_response_data, ranking_length)
-                # if self.pos_pool_rank:
-                #     y = [len(el["pos_pool"]) * np.ones(ranking_length) for el in context_response_data]
-                # else:
-                #     y = [np.ones(ranking_length) for _ in context_response_data]
-                # x = [[(context[i], el) for el in response_data[i]] for i in range(len(context_response_data))]
-                # yield (x, y)
                 yield tuple(zip(*context_response_data))
-
-    def _create_neg_resp_rand(self, context_response_data, batch_size):
-        """Randomly chooses negative response for each context in a batch.
-
-        Sampling is performed from predefined pools of candidates or from the whole data.
-
-        Args:
-            context_response_data: A batch from the train part of the dataset.
-            batch_size: A batch size.
-
-        Returns:
-            one negative response for each context in a batch.
-        """
-        if self.sample_candidates_pool:
-            negative_response_data = [random.choice(el["neg_pool"])
-                                      for el in context_response_data]
-        else:
-            candidates = []
-            for i in range(batch_size):
-                candidate = np.random.randint(0, self.len_vocab, 1)[0]
-                while candidate in context_response_data[i]["pos_pool"]:
-                    candidate = np.random.randint(0, self.len_vocab, 1)[0]
-                candidates.append(candidate)
-            negative_response_data = candidates
-        return negative_response_data
-
-    def _create_rank_resp(self, context_response_data, ranking_length):
-        """Chooses a set of negative responses for each context in a batch to evaluate ranking quality.
-
-        Negative responses are taken from predefined pools of candidates or from the whole data.
-
-        Args:
-            context_response_data: A batch from the train part of the dataset.
-            ranking_length: a number of responses for each context to evaluate ranking quality.
-
-        Returns:
-            list of responses for each context in a batch.
-        """
-        response_data = []
-        for i in range(len(context_response_data)):
-            pos_pool = context_response_data[i]["pos_pool"]
-            resp = context_response_data[i]["response"]
-            if self.pos_pool_rank:
-                pos_pool.insert(0, pos_pool.pop(pos_pool.index(resp)))
-            else:
-                pos_pool = [resp]
-            neg_pool = context_response_data[i]["neg_pool"]
-            response = pos_pool + neg_pool
-            response_data.append(response[:ranking_length])
-        return response_data

@@ -5,14 +5,7 @@
   },
   "dataset_iterator": {
     "name": "ranking_iterator",
-    "seed": 243,
-    "len_vocab": 24981,
-    "sample_candidates_pool": false,
-    "sample_candidates_pool_valid": true,
-    "sample_candidates_pool_test": true,
-    "num_negative_samples": 500,
-    "num_ranking_samples_valid": 500,
-    "num_ranking_samples_test": 500
+    "seed": 243
   },
   "chainer": {
     "in": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
@@ -23,7 +16,7 @@
         "name": "ranking_vocab",
         "save_path": "vocabs/",
         "load_path": "vocabs/",
-        "num_negative_samples": 6,
+        "num_ranking_samples": 10,
         "max_sequence_length": 200,
         "tokenizer": {"name": "split_tokenizer"},
         "embedder": "random",
@@ -42,9 +35,10 @@
         "train_now": true,
         "embeddings": "random",
         "embeddings_path": "insurance_embeddings/wiki.en.bin",
+        "use_matrix": false,
+        "emb_matrix": "#insurance_vocab.emb_matrix",
         "max_sequence_length": 200,
         "embedding_dim": 300,
-        "use_matrix": false,
         "seed": 243,
         "reccurent": "bilstm",
         "max_pooling": true,

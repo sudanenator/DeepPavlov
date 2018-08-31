@@ -1,6 +1,5 @@
 from pathlib import Path
 from deeppavlov.core.commands.utils import expand_path
-from deeppavlov.models.ranking.ranking_dict import RankingDict
 from collections import Counter
 from nltk import word_tokenize
 import csv

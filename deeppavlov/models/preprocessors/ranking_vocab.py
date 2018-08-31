@@ -22,23 +22,61 @@ import copy
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.estimator import Estimator
 from typing import List, Callable
+from deeppavlov.core.data.utils import mark_done, is_done
 
 log = get_logger(__name__)
 
 
 @register('ranking_vocab')
 class RankingVocab(Estimator):
-    """
-    use_matrix: Whether to use trainable matrix with token (word) embeddings.
-    hard_triplets_sampling: Whether to use hard triplets sampling to train the model
-        i.e. to choose negative samples close to positive ones.
-    hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
-    semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
-        than positive samples or not.
-    pos_pool_rank: Whether to count samples from the whole `pos_pool` as correct answers in test / validation mode.
-    pos_pool_sample: Whether to sample response from `pos_pool` each time when the batch is generated.
-        If ``False``, the response from `response` will be used.
+    """Class to encode characters, tokens, whole contexts and responses with vocabularies, to pad and truncate.
 
+    Args:
+        max_sequence_length: A maximum length of a sequence in tokens.
+            Longer sequences will be truncated and shorter ones will be padded.
+        max_token_length: A maximum length of a token for representing it by a character-level embedding.
+        padding: Padding. Possible values are ``pre`` and ``post``.
+            If set to ``pre`` a sequence will be padded at the beginning.
+            If set to ``post`` it will padded at the end.
+        truncating: Truncating. Possible values are ``pre`` and ``post``.
+            If set to ``pre`` a sequence will be truncated at the beginning.
+            If set to ``post`` it will truncated at the end.
+        token_embeddings: Whether to use token embeddins or not.
+        char_embeddings: Whether to use character embeddings or not.
+        char_pad: Character-level padding. Possible values are ``pre`` and ``post``.
+            If set to ``pre`` a token will be padded at the beginning.
+            If set to ``post`` it will padded at the end.
+        char_trunc: Character-level truncating. Possible values are ``pre`` and ``post``.
+            If set to ``pre`` a token will be truncated at the beginning.
+            If set to ``post`` it will truncated at the end.
+        tok_dynamic_batch:  Whether to use dynamic batching. If ``True``, a maximum length of a sequence for a batch
+            will be equal to the maximum of all sequences lengths from this batch,
+            but not higher than ``max_sequence_length``.
+        char_dynamic_batch: Whether to use dynamic batching for character-level embeddings.
+            If ``True``, a maximum length of a token for a batch
+            will be equal to the maximum of all tokens lengths from this batch,
+            but not higher than ``max_token_length``.
+        update_embeddings: Whether to store and update context and response embeddings or not.
+        num_ranking_samples_train: The number of condidates to perform ranking.
+        num_ranking_samples_test: The number of condidates to perform ranking.
+        pos_pool_sample: Whether to sample response from `pos_pool` each time when the batch is generated.
+            If ``False``, the response from `response` will be used.
+        pos_pool_rank: Whether to count samples from the whole `pos_pool` as correct answers in test / validation mode.
+        tokenizer: The method to tokenize contexts and responses.
+        seed: Random seed.
+        hard_triplets_sampling: Whether to use hard triplets sampling to train the model
+            i.e. to choose negative samples close to positive ones.
+        hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
+            It is only used when ``hard_triplets_sampling`` is set to ``True``.
+        semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
+            than positive samples or not. It is only used when ``hard_triplets_sampling`` is set to ``True``.
+        num_hardest_negatives: It is only used when ``hard_triplets_sampling`` is set to ``True``
+            and ``semi_hard_negatives`` is set to ``False``.
+        embedder: The method providing embeddings for tokens.
+        embedding_dim: Dimensionality of token (word) embeddings.
+        use_matrix: Whether to use trainable matrix with token (word) embeddings.
+        triplet_mode: Whether to use a model with triplet loss.
+            If ``False``, a model with crossentropy loss will be used.
     """
 
     def __init__(self,
@@ -55,8 +93,7 @@ class RankingVocab(Estimator):
                  tok_dynamic_batch: bool = False,
                  char_dynamic_batch: bool = False,
                  update_embeddings: bool = False,
-                 num_negative_samples: int = None,
-                 num_ranking_samples_test: int = 10,
+                 num_ranking_samples: int = 10,
                  pos_pool_sample: bool = False,
                  pos_pool_rank: bool = True,
                  tokenizer: Callable = None,
@@ -82,8 +119,7 @@ class RankingVocab(Estimator):
         self.tok_dynamic_batch = tok_dynamic_batch
         self.char_dynamic_batch = char_dynamic_batch
         self.upd_embs = update_embeddings
-        self.num_negative_samples = num_negative_samples
-        self.num_ranking_samples_test = num_ranking_samples_test
+        self.num_ranking_samples = num_ranking_samples
         self.pos_pool_sample = pos_pool_sample
         self.pos_pool_rank = pos_pool_rank
         self.tokenizer = tokenizer
@@ -96,21 +132,21 @@ class RankingVocab(Estimator):
         self.use_matrix = use_matrix
         self.triplet_mode = triplet_mode
 
-        save_path = expand_path(save_path).resolve()
-        load_path = expand_path(load_path).resolve()
+        self.save_path = expand_path(save_path).resolve()
+        self.load_path = expand_path(load_path).resolve()
 
-        self.char_save_path = save_path / "char2int.dict"
-        self.char_load_path = load_path / "char2int.dict"
-        self.tok_save_path = save_path / "tok2int.dict"
-        self.tok_load_path = load_path / "tok2int.dict"
-        self.cont_save_path = save_path / "cont2toks.dict"
-        self.cont_load_path = load_path / "cont2toks.dict"
-        self.resp_save_path = save_path / "resp2toks.dict"
-        self.resp_load_path = load_path / "resp2toks.dict"
-        self.cemb_save_path = str(save_path / "context_embs.npy")
-        self.cemb_load_path = str(load_path / "context_embs.npy")
-        self.remb_save_path = str(save_path / "response_embs.npy")
-        self.remb_load_path = str(load_path / "response_embs.npy")
+        self.char_save_path = self.save_path / "char2int.dict"
+        self.char_load_path = self.load_path / "char2int.dict"
+        self.tok_save_path = self.save_path / "tok2int.dict"
+        self.tok_load_path = self.load_path / "tok2int.dict"
+        self.cont_save_path = self.save_path / "cont2toks.dict"
+        self.cont_load_path = self.load_path / "cont2toks.dict"
+        self.resp_save_path = self.save_path / "resp2toks.dict"
+        self.resp_load_path = self.load_path / "resp2toks.dict"
+        self.cemb_save_path = str(self.save_path / "context_embs.npy")
+        self.cemb_load_path = str(self.load_path / "context_embs.npy")
+        self.remb_save_path = str(self.save_path / "response_embs.npy")
+        self.remb_load_path = str(self.load_path / "response_embs.npy")
 
         self.char2int_vocab = {}
         self.int2char_vocab = {}
@@ -123,35 +159,42 @@ class RankingVocab(Estimator):
 
         random.seed(seed)
 
-        super().__init__(load_path=load_path, save_path=save_path, **kwargs)
+        super().__init__(load_path=self.load_path, save_path=self.save_path, **kwargs)
 
         if self.embedder == "random":
             self.embeddings_model = dict()
 
+        self.len_vocab = 0
+        self.len_char_vocab = 0
+
+        if is_done(self.load_path):
+            self.load()
+
     def fit(self, context, response, pos_pool, neg_pool):
-        log.info("[initializing new `{}`]".format(self.__class__.__name__))
-        if self.char_embeddings:
-            self.build_int2char_vocab()
-            self.build_char2int_vocab()
-        c_tok = self.tokenizer(context)
-        r_tok = self.tokenizer(response)
-        pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
-        if neg_pool[0] is not None:
-            neg_pool_tok = [self.tokenizer(el) for el in neg_pool]
-        else:
-            neg_pool_tok = neg_pool
-        self.build_int2tok_vocab(c_tok, r_tok, pos_pool_tok, neg_pool_tok)
-        self.build_tok2int_vocab()
+        if not is_done(self.save_path):
+            log.info("[initializing new `{}`]".format(self.__class__.__name__))
+            if self.char_embeddings:
+                self.build_int2char_vocab()
+                self.build_char2int_vocab()
+            c_tok = self.tokenizer(context)
+            r_tok = self.tokenizer(response)
+            pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
+            if neg_pool[0] is not None:
+                neg_pool_tok = [self.tokenizer(el) for el in neg_pool]
+            else:
+                neg_pool_tok = neg_pool
+            self.build_int2tok_vocab(c_tok, r_tok, pos_pool_tok, neg_pool_tok)
+            self.build_tok2int_vocab()
 
-        self.len_vocab = len(self.tok2int_vocab)
-        self.len_char_vocab = len(self.char2int_vocab)
+            self.len_vocab = len(self.tok2int_vocab)
+            self.len_char_vocab = len(self.char2int_vocab)
 
-        self.build_context2toks_vocab(c_tok)
-        self.build_response2toks_vocab(r_tok, pos_pool_tok, neg_pool_tok)
-        if self.upd_embs:
-            self.build_context2emb_vocab()
-            self.build_response2emb_vocab()
-        self.build_emb_matrix()
+            self.build_context2toks_vocab(c_tok)
+            self.build_response2toks_vocab(r_tok, pos_pool_tok, neg_pool_tok)
+            if self.upd_embs:
+                self.build_context2emb_vocab()
+                self.build_response2emb_vocab()
+            self.build_emb_matrix()
 
     def load(self):
         log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
@@ -168,9 +211,13 @@ class RankingVocab(Estimator):
 
         self.len_vocab = len(self.tok2int_vocab)
         self.len_char_vocab = len(self.char2int_vocab)
+        if not self.use_matrix:
+            self.build_emb_matrix()
 
     def save(self):
         log.info("[saving `{}`]".format(self.__class__.__name__))
+        if not is_done(self.save_path):
+            self.save_path.mkdir()
         if self.char_embeddings:
             self.save_int2char()
         self.save_int2tok()
@@ -179,6 +226,7 @@ class RankingVocab(Estimator):
         if self.upd_embs:
             self.save_cont()
             self.save_resp()
+        mark_done(self.save_path)
 
     def build_int2char_vocab(self):
         pass
@@ -248,7 +296,7 @@ class RankingVocab(Estimator):
         r_tok = self.tokenizer(response)
         pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
         if neg_pool[0] is not None:
-            neg_pool_tok = [self.tokenizer(el) for el in neg_pool]
+            neg_pool_tok = [self.tokenizer(el[:self.num_ranking_samples]) for el in neg_pool]
         else:
             neg_pool_tok = neg_pool
         c = [el for el in self.make_ints(c_tok)]
@@ -269,7 +317,7 @@ class RankingVocab(Estimator):
 
     def generate_items(self, pos_pool):
         candidates = []
-        for i in range(self.num_negative_samples):
+        for i in range(self.num_ranking_samples):
             candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
             while candidate in pos_pool:
                 candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
@@ -352,7 +400,7 @@ class RankingVocab(Estimator):
         self.int2char_vocab = {int(el.split('\t')[0]): el.split('\t')[1][:-1] for el in data}
 
     def save_int2tok(self):
-        with self.tok_save_path.open('w') as f:
+        with open(self.tok_save_path, 'w') as f:
             f.write('\n'.join(['\t'.join([str(el[0]), el[1]]) for el in self.int2tok_vocab.items()]))
 
     def load_int2tok(self):
@@ -444,7 +492,7 @@ class RankingVocab(Estimator):
                 rank_pool.append(ppool + list(neg_pool[i][:-len(ppool)]))
             else:
                 rank_pool.append([response[i]] + neg_pool[i])
-        assert(len(rank_pool[-1]) == self.num_negative_samples)
+        assert(len(rank_pool[-1]) == self.num_ranking_samples)
         if self.use_matrix:
             rank_pool_emb = rank_pool
         else:

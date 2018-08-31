@@ -12,6 +12,7 @@ from deeppavlov.core.models.tf_backend import TfModelMeta
 from deeppavlov.core.common.log import get_logger
 from deeppavlov.core.layers import keras_layers
 from pathlib import Path
+from deeppavlov.core.commands.utils import expand_path
 
 log = get_logger(__name__)
 
@@ -56,8 +57,11 @@ class RankingNetwork(metaclass=TfModelMeta):
     """
 
     def __init__(self,
+                 save_path: str,
+                 load_path: str,
                  toks_num: int,
                  max_sequence_length: int,
+                 emb_matrix: np.ndarray = None,
                  chars_num: int = None,
                  max_token_length: int = None,
                  learning_rate: float = 1e-3,
@@ -79,6 +83,9 @@ class RankingNetwork(metaclass=TfModelMeta):
                  hidden_dim: int = 300,
                  max_pooling: bool = True):
 
+        self.save_path = expand_path(save_path).resolve()
+        self.load_path = expand_path(load_path).resolve()
+        self.emb_matrix = emb_matrix
         self.distance = distance
         self.toks_num = toks_num
         self.use_matrix = use_matrix
@@ -131,7 +138,10 @@ class RankingNetwork(metaclass=TfModelMeta):
         # self.response_embedding = Model(inputs=[self.obj_model.inputs[2], self.obj_model.inputs[3]],
         #                          outputs=self.obj_model.get_layer(name="pooling").get_output_at(1))
 
-
+        if self.load_path.exists():
+           self.load()
+        else:
+            self.init_from_scratch()
 
     def _config_session(self):
         """
@@ -144,24 +154,25 @@ class RankingNetwork(metaclass=TfModelMeta):
         config.gpu_options.visible_device_list = str(self.device_num)
         return tf.Session(config=config)
 
-    def load(self, path):
+    def load(self):
         log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
-        self.obj_model.load_weights(path)
+        self.obj_model.load_weights(str(self.load_path))
 
-    def save(self, path):
+    def save(self):
         log.info("[saving `{}`]".format(self.__class__.__name__))
-        self.obj_model.save_weights(path)
-        self.context_embedding.save(str(Path(path).parent / 'sen_emb_model.h5'))
+        self.obj_model.save_weights(str(self.save_path))
+        self.context_embedding.save(str(self.save_path.parent / 'sen_emb_model.h5'))
 
-    def init_from_scratch(self, emb_matrix=None):
+    def init_from_scratch(self):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
-        if self.token_embeddings and not self.char_embeddings:
-            if self.use_matrix:
-                if self.shared_weights:
-                    self.duplet.get_layer(name="embedding").set_weights([emb_matrix])
-                if self.shared_weights:
-                    self.duplet.get_layer(name="embedding_a").set_weights([emb_matrix])
-                    self.duplet.get_layer(name="embedding_b").set_weights([emb_matrix])
+        if self.use_matrix:
+            if self.token_embeddings and not self.char_embeddings:
+                if self.use_matrix:
+                    if self.shared_weights:
+                        self.duplet.get_layer(name="embedding").set_weights([self.emb_matrix])
+                    if self.shared_weights:
+                        self.duplet.get_layer(name="embedding_a").set_weights([self.emb_matrix])
+                        self.duplet.get_layer(name="embedding_b").set_weights([self.emb_matrix])
 
     def embedding_layer(self):
         if self.shared_weights:
