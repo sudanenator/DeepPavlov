@@ -64,14 +64,6 @@ class RankingVocab(Estimator):
         pos_pool_rank: Whether to count samples from the whole `pos_pool` as correct answers in test / validation mode.
         tokenizer: The method to tokenize contexts and responses.
         seed: Random seed.
-        hard_triplets_sampling: Whether to use hard triplets sampling to train the model
-            i.e. to choose negative samples close to positive ones.
-        hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
-            It is only used when ``hard_triplets_sampling`` is set to ``True``.
-        semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
-            than positive samples or not. It is only used when ``hard_triplets_sampling`` is set to ``True``.
-        num_hardest_negatives: It is only used when ``hard_triplets_sampling`` is set to ``True``
-            and ``semi_hard_negatives`` is set to ``False``.
         embedder: The method providing embeddings for tokens.
         embedding_dim: Dimensionality of token (word) embeddings.
         use_matrix: Whether to use trainable matrix with token (word) embeddings.
@@ -123,10 +115,6 @@ class RankingVocab(Estimator):
         self.pos_pool_sample = pos_pool_sample
         self.pos_pool_rank = pos_pool_rank
         self.tokenizer = tokenizer
-        self.hard_triplets_sampling = hard_triplets_sampling
-        self.hardest_positives = hardest_positives
-        self.semi_hard_negatives = semi_hard_negatives
-        self.num_hardest_negatives = num_hardest_negatives
         self.embedder = embedder
         self.embedding_dim = embedding_dim
         self.use_matrix = use_matrix
