@@ -170,7 +170,7 @@ class RankingNetwork(metaclass=TfModelMeta):
                 if self.use_matrix:
                     if self.shared_weights:
                         self.duplet.get_layer(name="embedding").set_weights([self.emb_matrix])
-                    if self.shared_weights:
+                    else:
                         self.duplet.get_layer(name="embedding_a").set_weights([self.emb_matrix])
                         self.duplet.get_layer(name="embedding_b").set_weights([self.emb_matrix])
 

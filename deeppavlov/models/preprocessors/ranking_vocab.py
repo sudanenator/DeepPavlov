@@ -83,6 +83,7 @@ class RankingVocab(Estimator):
                  save_path: str,
                  load_path: str,
                  max_sequence_length: int,
+                 use_matrix: bool,
                  max_token_length: int = None,
                  padding: str = 'post',
                  truncating: str = 'post',
@@ -104,7 +105,6 @@ class RankingVocab(Estimator):
                  num_hardest_negatives: int = None,
                  embedder: Callable = "random",
                  embedding_dim: int = 300,
-                 use_matrix: bool = False,
                  triplet_mode: bool = True,
                  **kwargs):
 
@@ -166,6 +166,7 @@ class RankingVocab(Estimator):
 
         self.len_vocab = 0
         self.len_char_vocab = 0
+        self.emb_matrix = None
 
         if is_done(self.load_path):
             self.load()
