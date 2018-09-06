@@ -57,8 +57,6 @@ class RankingVocab(Estimator):
             will be equal to the maximum of all tokens lengths from this batch,
             but not higher than ``max_token_length``.
         update_embeddings: Whether to store and update context and response embeddings or not.
-        num_ranking_samples_train: The number of condidates to perform ranking.
-        num_ranking_samples_test: The number of condidates to perform ranking.
         pos_pool_sample: Whether to sample response from `pos_pool` each time when the batch is generated.
             If ``False``, the response from `response` will be used.
         pos_pool_rank: Whether to count samples from the whole `pos_pool` as correct answers in test / validation mode.
@@ -67,8 +65,6 @@ class RankingVocab(Estimator):
         embedder: The method providing embeddings for tokens.
         embedding_dim: Dimensionality of token (word) embeddings.
         use_matrix: Whether to use trainable matrix with token (word) embeddings.
-        triplet_mode: Whether to use a model with triplet loss.
-            If ``False``, a model with crossentropy loss will be used.
     """
 
     def __init__(self,
@@ -91,13 +87,8 @@ class RankingVocab(Estimator):
                  pos_pool_rank: bool = True,
                  tokenizer: Callable = None,
                  seed: int = None,
-                 hard_triplets_sampling: bool = False,
-                 hardest_positives: bool = False,
-                 semi_hard_negatives: bool = False,
-                 num_hardest_negatives: int = None,
                  embedder: Callable = "random",
                  embedding_dim: int = 300,
-                 triplet_mode: bool = True,
                  **kwargs):
 
         self.max_sequence_length = max_sequence_length
@@ -118,7 +109,7 @@ class RankingVocab(Estimator):
         self.embedder = embedder
         self.embedding_dim = embedding_dim
         self.use_matrix = use_matrix
-        self.triplet_mode = triplet_mode
+
 
         self.save_path = expand_path(save_path).resolve()
         self.load_path = expand_path(load_path).resolve()
@@ -159,31 +150,34 @@ class RankingVocab(Estimator):
         if is_done(self.load_path):
             self.load()
 
-    def fit(self, context, response, pos_pool, neg_pool):
+    def fit(self, x):
         if not is_done(self.save_path):
             log.info("[initializing new `{}`]".format(self.__class__.__name__))
             if self.char_embeddings:
                 self.build_int2char_vocab()
                 self.build_char2int_vocab()
-            c_tok = self.tokenizer(context)
-            r_tok = self.tokenizer(response)
-            pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
-            if neg_pool[0] is not None:
-                neg_pool_tok = [self.tokenizer(el) for el in neg_pool]
-            else:
-                neg_pool_tok = neg_pool
-            self.build_int2tok_vocab(c_tok, r_tok, pos_pool_tok, neg_pool_tok)
+            x_tok = [self.tokenizer(el) for el in x]
+            self.build_int2tok_vocab(x_tok)
             self.build_tok2int_vocab()
 
             self.len_vocab = len(self.tok2int_vocab)
             self.len_char_vocab = len(self.char2int_vocab)
 
-            self.build_context2toks_vocab(c_tok)
-            self.build_response2toks_vocab(r_tok, pos_pool_tok, neg_pool_tok)
+            self.build_context2toks_vocab(x)
+            self.build_response2toks_vocab(x)
             if self.upd_embs:
                 self.build_context2emb_vocab()
                 self.build_response2emb_vocab()
             self.build_emb_matrix()
+
+    def __call__(self, x):
+        x_cut = [el[:self.num_ranking_samples+1] for el in x]
+        x_tok = [self.tokenizer(el) for el in x_cut]
+        x_proc = [self.make_ints(el) for el in x_tok]
+        if not self.use_matrix:
+            x_proc = self.get_embs(x_proc)
+        return x_proc
+
 
     def load(self):
         log.info("[initializing `{}` from saved]".format(self.__class__.__name__))
@@ -220,36 +214,22 @@ class RankingVocab(Estimator):
     def build_int2char_vocab(self):
         pass
 
-    def build_int2tok_vocab(self, c_tok, r_tok, pos_pool_tok, neg_pool_tok):
-        c = set([x for el in c_tok for x in el])
-        r = set([x for el in r_tok for x in el])
-        ppool = [x for el in pos_pool_tok for x in el]
-        ppool = set([x for el in ppool for x in el])
-        r = r | ppool
-        if neg_pool_tok[0] is not None:
-            npool = [x for el in neg_pool_tok for x in el]
-            npool = set([x for el in npool for x in el])
-            r = r | npool
-        tok = c | r
+    def build_int2tok_vocab(self, x):
+        x_proc = [li for el in x for li in el]
+        x_proc = [tok for el in x_proc for tok in el]
+        tok = set(x_proc)
         self.int2tok_vocab = {el[0]+1:el[1] for el in enumerate(tok)}
         self.int2tok_vocab[0] = '<UNK>'
 
-    def build_response2toks_vocab(self, r_tok, pos_pool_tok, neg_pool_tok):
-        r = set([' '.join(el) for el in r_tok])
-        ppool = [x for el in pos_pool_tok for x in el]
-        ppool = set([' '.join(el) for el in ppool])
-        r = r | ppool
-        if neg_pool_tok[0] is not None:
-            npool = [x for el in neg_pool_tok for x in el]
-            npool = set([' '.join(el) for el in npool])
-            r = r | npool
+    def build_response2toks_vocab(self, x):
+        r = [el[1] for el in x]
+        r = set(r)
         self.response2toks_vocab = {el[0]: el[1].split() for el in enumerate(r)}
 
-    def build_context2toks_vocab(self, contexts):
-        c = [' '.join(el) for el in contexts]
+    def build_context2toks_vocab(self, x):
+        c = [el[0] for el in x]
         c = set(c)
         self.context2toks_vocab = {el[0]: el[1].split() for el in enumerate(c)}
-
 
     def build_char2int_vocab(self):
         self.char2int_vocab = {el[1]: el[0] for el in self.int2char_vocab.items()}
@@ -279,39 +259,6 @@ class RankingVocab(Estimator):
         elif type == "response":
             toks_li = self.resps2toks(items_li)
         return toks_li
-
-    def __call__(self, context, response, pos_pool, neg_pool):
-        c_tok = self.tokenizer(context)
-        r_tok = self.tokenizer(response)
-        pos_pool_tok = [self.tokenizer(el) for el in pos_pool]
-        if neg_pool[0] is not None:
-            neg_pool_tok = [self.tokenizer(el[:self.num_ranking_samples]) for el in neg_pool]
-        else:
-            neg_pool_tok = neg_pool
-        c = [el for el in self.make_ints(c_tok)]
-        r = [el for el in self.make_ints(r_tok)]
-        ppool = [self.make_ints(el) for el in pos_pool_tok]
-        if neg_pool[0] is not None:
-            npool =[self.make_ints(el) for el in neg_pool_tok]
-        else:
-            npool = [self.make_ints(self.generate_items(el)) for el in pos_pool_tok]
-
-        if self.hard_triplets_sampling:
-            b = self.make_hard_triplets(x, y, self._net)
-            y = np.ones(len(b[0][0]))
-        else:
-            b = self.make_batch(c, r, ppool, npool)
-
-        return b
-
-    def generate_items(self, pos_pool):
-        candidates = []
-        for i in range(self.num_ranking_samples):
-            candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
-            while candidate in pos_pool:
-                candidate = self.response2toks_vocab[random.randint(0, len(self.response2toks_vocab)-1)]
-            candidates.append(candidate)
-        return candidates
 
     def make_ints(self, toks_li):
         if self.tok_dynamic_batch:
@@ -347,7 +294,7 @@ class RankingVocab(Estimator):
                                 maxlen=msl,
                                 padding=self.padding,
                                 truncating=self.truncating)
-        return ints_li
+        return list(ints_li)
 
     def make_char_ints(self, toks_li, msl, mtl):
         ints_li = np.zeros((len(toks_li), msl, mtl))
@@ -440,191 +387,6 @@ class RankingVocab(Estimator):
         for i in range(response_embeddings_arr.shape[0]):
             self.response2emb_vocab[i] = response_embeddings_arr[i]
 
-    def make_batch(self, cont, resp, pos_pool, neg_pool):
-        if self.use_matrix:
-            context_emb = cont
-        else:
-            context_emb = self.get_embs(cont)
-        if self.pos_pool_sample:
-            response = [random.choice(el) for el in pos_pool]
-        else:
-            response = resp
-        if self.use_matrix:
-            response_emb = response
-        else:
-            response_emb = self.get_embs(response)
-        if self.triplet_mode:
-            negative_response = [random.choice(el) for el in neg_pool]
-            if self.use_matrix:
-                negative_response_emb = negative_response
-            else:
-                negative_response_emb = self.get_embs(negative_response)
-            if self.hard_triplets_sampling:
-                positives = [random.choices(el, k=self.num_positive_samples) for el in pos_pool]
-                if self.use_matrix:
-                    positives_emb = positives
-                else:
-                    positives_emb = [self.get_embs(el) for el in positives]
-                x = [[(el[0], x) for x in el[1:]] for el in zip(context_emb, *positives_emb)]
-            else:
-                # x = [(context, response), (context, negative_response)]
-                train = [[(el[0], el[1]), (el[0], el[2])]
-                         for el in zip(context_emb, response_emb, negative_response_emb)]
-        else:
-            # x = [(context, response)]
-            train = [[(el[0], el[1])] for el in zip(context_emb, response_emb)]
-        rank_pool = []
-        for i in range(len(context_emb)):
-            if self.pos_pool_rank:
-                ppool = list(copy.copy(pos_pool[i]))
-                ppool.insert(0, ppool.pop(self.get_index(ppool, response[i])))
-                rank_pool.append(ppool + list(neg_pool[i][:-len(ppool)]))
-            else:
-                rank_pool.append([response[i]] + neg_pool[i])
-        assert(len(rank_pool[-1]) == self.num_ranking_samples)
-        if self.use_matrix:
-            rank_pool_emb = rank_pool
-        else:
-            rank_pool_emb = [self.get_embs(el) for el in rank_pool]
-        test = []
-        for i in range(len(context_emb)):
-            test.append([(context_emb[i], el) for el in rank_pool_emb[i]])
-        x = list(zip(train, test))
-        return x
-
-    def get_index(self, a, b):
-        for i, el in enumerate(a):
-            if np.array_equal(el, b):
-                return i
-
-    def make_hard_triplets(self, x, y, net):
-        samples = [[s[1] for s in el] for el in x]
-        labels = y
-        batch_size = len(samples)
-        num_samples = len(samples[0])
-        samp = [y for el in samples for y in el]
-        s = self.dict.make_ints(samp)
-
-        embeddings = net.predict_embedding([s, s], 512, type='context')
-        embeddings = embeddings / np.expand_dims(np.linalg.norm(embeddings, axis=1), axis=1)
-        dot_product = embeddings @ embeddings.T
-        square_norm = np.diag(dot_product)
-        distances = np.expand_dims(square_norm, 0) - 2.0 * dot_product + np.expand_dims(square_norm, 1)
-        distances = np.maximum(distances, 0.0)
-        distances = np.sqrt(distances)
-
-        mask_anchor_negative = np.expand_dims(np.repeat(labels, num_samples), 0)\
-                               != np.expand_dims(np.repeat(labels, num_samples), 1)
-        mask_anchor_negative = mask_anchor_negative.astype(float)
-        max_anchor_negative_dist = np.max(distances, axis=1, keepdims=True)
-        anchor_negative_dist = distances + max_anchor_negative_dist * (1.0 - mask_anchor_negative)
-        if self.num_hardest_negatives is not None:
-            hard = np.argsort(anchor_negative_dist, axis=1)[:, :self.num_hardest_negatives]
-            ind = np.random.randint(self.num_hardest_negatives, size=batch_size * num_samples)
-            hardest_negative_ind = hard[batch_size * num_samples * [True], ind]
-        else:
-            hardest_negative_ind = np.argmin(anchor_negative_dist, axis=1)
-
-        mask_anchor_positive = np.expand_dims(np.repeat(labels, num_samples), 0) \
-                               == np.expand_dims(np.repeat(labels, num_samples), 1)
-        mask_anchor_positive = mask_anchor_positive.astype(float)
-        anchor_positive_dist = mask_anchor_positive * distances
-
-        c =[]
-        rp = []
-        rn = []
-        hrds = []
-
-        if self.hardest_positives:
-
-            if self.semi_hard_negatives:
-                hardest_positive_ind = []
-                hardest_negative_ind = []
-                for p, n in zip(anchor_positive_dist, anchor_negative_dist):
-                    no_samples = True
-                    p_li = list(zip(p, np.arange(batch_size * num_samples), batch_size * num_samples * [True]))
-                    n_li = list(zip(n, np.arange(batch_size * num_samples), batch_size * num_samples * [False]))
-                    pn_li = sorted(p_li + n_li, key=lambda el: el[0])
-                    for i, x in enumerate(pn_li):
-                        if not x[2]:
-                            for y in pn_li[:i][::-1]:
-                                if y[2] and y[0] > 0.0:
-                                    assert (x[1] != y[1])
-                                    hardest_negative_ind.append(x[1])
-                                    hardest_positive_ind.append(y[1])
-                                    no_samples = False
-                                    break
-                        if not no_samples:
-                            break
-                    if no_samples:
-                        print("There is no negative examples with distances greater than positive examples distances.")
-                        exit(0)
-            else:
-                if self.num_hardest_negatives is not None:
-                    hard = np.argsort(anchor_positive_dist, axis=1)[:, -self.num_hardest_negatives:]
-                    ind = np.random.randint(self.num_hardest_negatives, size=batch_size * num_samples)
-                    hardest_positive_ind = hard[batch_size * num_samples * [True], ind]
-                else:
-                    hardest_positive_ind = np.argmax(anchor_positive_dist, axis=1)
-
-            for i in range(batch_size):
-                for j in range(num_samples):
-                    c.append(s[i*num_samples+j])
-                    rp.append(s[hardest_positive_ind[i*num_samples+j]])
-                    rn.append(s[hardest_negative_ind[i*num_samples+j]])
-
-        else:
-            if self.semi_hard_negatives:
-                for i in range(batch_size):
-                    for j in range(num_samples):
-                        for k in range(j+1, num_samples):
-                            c.append(s[i*num_samples+j])
-                            c.append(s[i*num_samples+k])
-                            rp.append(s[i*num_samples+k])
-                            rp.append(s[i*num_samples+j])
-                            n, hrd = self.get_semi_hard_negative_ind(i, j, k, distances,
-                                                                anchor_negative_dist,
-                                                                batch_size, num_samples)
-                            assert(n != i*num_samples+k)
-                            rn.append(s[n])
-                            hrds.append(hrd)
-                            n, hrd = self.get_semi_hard_negative_ind(i, k, j, distances,
-                                                                anchor_negative_dist,
-                                                                batch_size, num_samples)
-                            assert(n != i*num_samples+j)
-                            rn.append(s[n])
-                            hrds.append(hrd)
-            else:
-                for i in range(batch_size):
-                    for j in range(num_samples):
-                        for k in range(j + 1, num_samples):
-                            c.append(s[i * num_samples + j])
-                            c.append(s[i * num_samples + k])
-                            rp.append(s[i * num_samples + k])
-                            rp.append(s[i * num_samples + j])
-                            rn.append(s[hardest_negative_ind[i * num_samples + j]])
-                            rn.append(s[hardest_negative_ind[i * num_samples + k]])
-
-        triplets = list(zip(c, rp, rn))
-        np.random.shuffle(triplets)
-        c = [el[0] for el in triplets]
-        rp = [el[1] for el in triplets]
-        rn = [el[2] for el in triplets]
-        ratio = sum(hrds) / len(hrds)
-        print("Ratio of semi-hard negative samples is %f" % ratio)
-        return [(c, rp), (c, rn)]
-
-    def get_semi_hard_negative_ind(self, i, j, k, distances, anchor_negative_dist, batch_size, num_samples):
-        anc_pos_dist = distances[i * num_samples + j, i * num_samples + k]
-        neg_dists = anchor_negative_dist[i * num_samples + j]
-        n_li_pre = sorted(list(zip(neg_dists, np.arange(batch_size * num_samples))), key=lambda el: el[0])
-        n_li = list(filter(lambda x: x[1]<i*num_samples, n_li_pre)) + \
-               list(filter(lambda x: x[1]>=(i+1)*num_samples, n_li_pre))
-        for x in n_li:
-            if x[0] > anc_pos_dist:
-                return x[1], True
-        return random.choice(n_li)[1], False
-
     def build_emb_matrix(self):
         self.emb_matrix = np.zeros((len(self.tok2int_vocab), self.embedding_dim))
         for tok, i in self.tok2int_vocab.items():
@@ -644,8 +406,5 @@ class RankingVocab(Estimator):
             for int_tok in el:
                 assert type(int_tok) != int
                 emb.append(self.emb_matrix[int_tok])
-            emb = np.vstack(emb)
             embs.append(emb)
-        # embs = [np.expand_dims(el, axis=0) for el in embs]
-        # embs = np.vstack(embs)
         return embs

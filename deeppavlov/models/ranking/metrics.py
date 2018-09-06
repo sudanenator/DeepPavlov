@@ -2,7 +2,6 @@ from deeppavlov.core.common.metrics_registry import register_metric
 
 import numpy as np
 
-
 @register_metric('r@1')
 def r_at_1(y_true, y_pred):
     return recall_at_k(y_true, y_pred, k=1)
@@ -22,6 +21,42 @@ def r_at_10(labels, predictions):
     return recall_at_k(labels, predictions, k=10)
 
 def recall_at_k(y_true, y_pred, k):
+    num_examples = float(len(y_pred))
+    predictions = np.array(y_pred)
+    predictions = np.argsort(predictions, -1)[:, :k]
+    num_correct = 0
+    for el in predictions:
+        if 0 in el:
+            num_correct += 1
+    return num_correct / num_examples
+
+@register_metric('rank_response')
+def rank_response(y_true, y_pred):
+    num_examples = float(len(y_pred))
+    predictions = np.array(y_pred)
+    predictions = np.argsort(predictions, -1)
+
+    return np.sum(np.argmax(predictions, -1))
+
+@register_metric('r@1_insQA')
+def r_at_1_insQA(y_true, y_pred):
+    return recall_at_k_insQA(y_true, y_pred, k=1)
+
+
+@register_metric('r@2_insQA')
+def r_at_2_insQA(y_true, y_pred):
+    return recall_at_k_insQA(y_true, y_pred, k=2)
+
+
+@register_metric('r@5_insQA')
+def r_at_5_insQA(labels, predictions):
+    return recall_at_k_insQA(labels, predictions, k=5)
+
+@register_metric('r@10_insQA')
+def r_at_10_insQA(labels, predictions):
+    return recall_at_k_insQA(labels, predictions, k=10)
+
+def recall_at_k_insQA(y_true, y_pred, k):
     labels = np.repeat(np.expand_dims(np.asarray(y_true), axis=1), k, axis=1)
     predictions = np.array(y_pred)
     predictions = np.argsort(predictions, -1)[:, :k]
@@ -31,21 +66,6 @@ def recall_at_k(y_true, y_pred, k):
             if predictions[i][j] in np.arange(labels[i][j]):
                 flags[i][j] = 1.
     return np.mean((np.sum(flags, -1) >= 1.).astype(float))
-
-
-@register_metric('rank_response')
-def rank_response(y_true, y_pred):
-    predictions = np.array(y_pred)
-    labels = np.repeat(np.expand_dims(np.asarray(y_true), axis=1), predictions.shape[1], axis=1)
-    predictions = np.argsort(predictions, -1)
-    ranks = []
-    for i in range(predictions.shape[0]):
-        for j in range(predictions.shape[1]):
-            if predictions[i][j] in np.arange(labels[i][j]):
-                ranks.append(j)
-                break
-    return np.mean(np.asarray(ranks).astype(float))
-
 
 @register_metric('loss')
 def triplet_loss(y_true, y_pred):

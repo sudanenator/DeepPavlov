@@ -8,7 +8,7 @@
     "seed": 243
   },
   "chainer": {
-    "in": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
+    "in": ["x"],
     "in_y": ["y"],
     "pipe": [
       {
@@ -16,37 +16,37 @@
         "name": "ranking_vocab",
         "save_path": "vocabs/",
         "load_path": "vocabs/",
-        "use_matrix": true,
+        "use_matrix": false,
         "num_ranking_samples": 10,
         "max_sequence_length": 200,
         "tokenizer": {"name": "split_tokenizer"},
         "embedder": "random",
-        "fit_on": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
-        "in": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
-        "out": ["x"]
+        "embedding_dim": 300,
+        "fit_on": ["x"],
+        "in": ["x"],
+        "out": ["x_proc"]
       },
       {
-        "in": ["x"],
+        "in": ["x_proc"],
         "in_y": ["y"],
-        "len_vocab": "#insurance_vocab.len_vocab",
-        "len_char_vocab": "#insurance_vocab.len_char_vocab",
         "out": ["y_predicted"],
         "name": "ranking_model",
         "device_num": 0,
         "train_now": true,
-        "embeddings": "random",
+        "len_vocab": "#insurance_vocab.len_vocab",
+        "len_char_vocab": "#insurance_vocab.len_char_vocab",
         "embeddings_path": "insurance_embeddings/wiki.en.bin",
-        "use_matrix": true,
+        "use_matrix": "#insurance_vocab.use_matrix",
         "emb_matrix": "#insurance_vocab.emb_matrix",
-        "max_sequence_length": 200,
-        "embedding_dim": 300,
+        "max_sequence_length": "#insurance_vocab.max_sequence_length",
+        "embedding_dim": "#insurance_vocab.embedding_dim",
         "seed": 243,
         "reccurent": "bilstm",
         "max_pooling": true,
         "shared_weights": true,
         "hidden_dim": 300,
         "learning_rate": 1e-3,
-        "distance": "cos_similarity",
+        "triplet_mode": true,
         "margin": 0.1,
         "save_path": "insurance_ranking/model_weights.h5",
         "load_path": "insurance_ranking/model_weights.h5",
@@ -62,9 +62,7 @@
     "pytest_max_batches": 2,
     "metrics": ["r@1", "rank_response", "loss"],
     "validation_patience": 5,
-    "val_every_n_epochs": 10,
-    "log_every_n_batches": 1
-
+    "val_every_n_epochs": 1
   },
   "metadata": {
     "requirements": [

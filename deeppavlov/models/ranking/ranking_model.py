@@ -18,7 +18,6 @@ from overrides import overrides
 from copy import deepcopy
 import inspect
 import numpy as np
-from nltk.tokenize import sent_tokenize, word_tokenize
 
 from deeppavlov.core.common.attributes import check_attr_true
 from deeppavlov.core.common.registry import register
@@ -37,17 +36,12 @@ class RankingModel(NNModel):
     Args:
         interact_pred_num: The number of the most relevant contexts and responses
             which model returns in the `interact` regime.
-        triplet_mode: Whether to use a model with triplet loss.
-            If ``False``, a model with crossentropy loss will be used.
         update_embeddings: Whether to store and update context and response embeddings or not.
         **kwargs: Other parameters.
     """
 
     def __init__(self,
-                 len_vocab: int,
-                 len_char_vocab: int,
                  interact_pred_num: int = 3,
-                 triplet_mode: bool = True,
                  update_embeddings: bool = False,
                  **kwargs):
 
@@ -62,10 +56,7 @@ class RankingModel(NNModel):
 
         self.interact_pred_num = interact_pred_num
         self.train_now = train_now
-        self.triplet_mode = triplet_mode
         self.upd_embs = update_embeddings
-        self.len_vocab = len_vocab
-        self.len_char_vocab = len_char_vocab
 
         opt = deepcopy(kwargs)
 
@@ -81,9 +72,7 @@ class RankingModel(NNModel):
     @overrides
     def load(self):
         """Load the model from the last checkpoint if it exists. Otherwise instantiate a new model."""
-        self._net = RankingNetwork(chars_num=self.len_char_vocab,
-                                   toks_num=self.len_vocab,
-                                   **self.network_parameters)
+        self._net = RankingNetwork(**self.network_parameters)
 
     @overrides
     def save(self):
@@ -99,18 +88,16 @@ class RankingModel(NNModel):
         """Train the model on a batch."""
         if self.upd_embs:
             self.reset_embeddings()
-        b  = [el[0] for el in batch]
-        b = self.make_batch(b)
+        b = self.make_batch(batch)
         self._net.train_on_batch(b, y)
 
     def __call__(self, batch):
         """Make a prediction on a batch."""
         if len(batch) > 1:
             y_pred = []
-            b = [el[1] for el in batch]
-            b = self.make_batch(b)
-            for el in b:
-                yp = self._net.predict_score_on_batch(el)
+            b = self.make_batch(batch)
+            for el in b[1:]:
+                yp = self._net.predict_score_on_batch([b[0], el])
                 y_pred.append(yp)
             y_pred = np.hstack(y_pred)
             return y_pred
@@ -169,23 +156,8 @@ class RankingModel(NNModel):
         pass
 
     def make_batch(self, x):
-        sample_len = len(x[0])
         b = []
-        for i in range(sample_len):
-            c = []
-            r = []
-            for el in x:
-                c.append(el[i][0])
-                r.append(el[i][1])
-            b.append([np.asarray(c), np.asarray(r)])
+        for i in range(len(x[0])):
+            z = [el[i] for el in x]
+            b.append(np.asarray(z))
         return b
-
-def tokenize(sen_list):
-    sen_tokens_list = []
-    for sen in sen_list:
-        sent_toks = sent_tokenize(sen)
-        word_toks = [word_tokenize(el) for el in sent_toks]
-        tokens = [val for sublist in word_toks for val in sublist]
-        tokens = [el for el in tokens if el != '']
-        sen_tokens_list.append(tokens)
-    return sen_tokens_list

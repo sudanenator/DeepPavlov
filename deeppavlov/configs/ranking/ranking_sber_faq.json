@@ -5,23 +5,33 @@
   },
   "dataset_iterator": {
     "name": "ranking_iterator",
-    "seed": 243,
-    "sample_candidates_pool": true,
-    "sample_candidates_pool_valid": true,
-    "sample_candidates_pool_test": true,
-    "num_negative_samples": 10,
-    "num_ranking_samples_valid": 10,
-    "num_ranking_samples_test": 10,
-    "pos_pool_sample": true,
-    "pos_pool_rank": false
+    "seed": 243
   },
   "chainer": {
     "in": ["x"],
     "in_y": ["y"],
     "pipe": [
       {
+        "id": "insurance_vocab",
+        "name": "ranking_vocab",
+        "save_path": "vocabs/",
+        "load_path": "vocabs/",
+        "use_matrix": false,
+        "num_ranking_samples": 10,
+        "pos_pool_sample": true,
+        "pos_pool_rank": false,
+        "max_sequence_length": 200,
+        "tokenizer": {"name": "split_tokenizer"},
+        "embedder": "random",
+        "fit_on": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
+        "in": ["context", "response", "pos_resp_pool", "neg_resp_pool"],
+        "out": ["x"]
+      },
+      {
         "in": ["x"],
         "in_y": ["y"],
+        "len_vocab": "#insurance_vocab.len_vocab",
+        "len_char_vocab": "#insurance_vocab.len_char_vocab",
         "out": ["y_predicted"],
         "name": "ranking_model",
         "device_num": 0,

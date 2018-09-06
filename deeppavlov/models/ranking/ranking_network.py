@@ -32,9 +32,6 @@ class RankingNetwork(metaclass=TfModelMeta):
         triplet_mode: Whether to use a model with triplet loss.
             If ``False``, a model with crossentropy loss will be used.
         margin: A margin parameter for triplet loss. Only required if ``triplet_mode`` is set to ``True``.
-        distance: Distance metric (similarity measure) to compare context and response representations in the model.
-            Possible values are ``cos_similarity`` (cosine similarity), ``euqlidian`` (euqlidian distance),
-            ``sigmoid`` (1 minus sigmoid).
         token_embeddings: Whether to use token (word) embeddings in the model.
         max_sequence_length: A maximum length of a sequence in tokens.
             Longer sequences will be truncated and shorter ones will be padded.
@@ -67,10 +64,10 @@ class RankingNetwork(metaclass=TfModelMeta):
     def __init__(self,
                  save_path: str,
                  load_path: str,
-                 toks_num: int,
+                 len_vocab: int,
                  max_sequence_length: int,
                  emb_matrix: np.ndarray = None,
-                 chars_num: int = None,
+                 len_char_vocab: int = None,
                  max_token_length: int = None,
                  learning_rate: float = 1e-3,
                  device_num: int = 0,
@@ -78,7 +75,6 @@ class RankingNetwork(metaclass=TfModelMeta):
                  shared_weights: bool = True,
                  triplet_mode: bool = True,
                  margin: float = 0.1,
-                 distance: str = "cos_similarity",
                  token_embeddings: bool = True,
                  use_matrix: bool = False,
                  tok_dynamic_batch: bool = False,
@@ -98,8 +94,7 @@ class RankingNetwork(metaclass=TfModelMeta):
         self.save_path = expand_path(save_path).resolve()
         self.load_path = expand_path(load_path).resolve()
         self.emb_matrix = emb_matrix
-        self.distance = distance
-        self.toks_num = toks_num
+        self.toks_num = len_vocab
         self.use_matrix = use_matrix
         self.seed = seed
         self.hidden_dim = hidden_dim
@@ -112,7 +107,7 @@ class RankingNetwork(metaclass=TfModelMeta):
         self.recurrent = reccurent
         self.token_embeddings = token_embeddings
         self.char_embeddings = char_embeddings
-        self.chars_num = chars_num
+        self.chars_num = len_char_vocab
         self.char_emb_dim = char_emb_dim
         self.highway_on_top = highway_on_top
         self.hard_triplets_sampling = hard_triplets_sampling
@@ -133,19 +128,24 @@ class RankingNetwork(metaclass=TfModelMeta):
         K.set_session(self.sess)
 
         self.optimizer = Adam(lr=self.learning_rate)
-        self.duplet = self.duplet()
+        self.embeddings = self.embeddings_model()
         if self.triplet_mode:
             self.loss = self.triplet_loss
-            self.obj_model = self.triplet_model()
         else:
             self.loss = losses.binary_crossentropy
-            self.obj_model = self.duplet_model()
+        self.obj_model = self.loss_model()
         self.obj_model.compile(loss=self.loss, optimizer=self.optimizer)
-        self.score_model = self.duplet
-        self.context_embedding = Model(inputs=self.duplet.inputs,
-                                 outputs=self.duplet.get_layer(name="pooling").get_output_at(0))
-        self.response_embedding = Model(inputs=self.duplet.inputs,
-                                 outputs=self.duplet.get_layer(name="pooling").get_output_at(1))
+        self.score_model = self.prediction_model()
+
+        self.context_embedding = Model(inputs=self.embeddings.inputs,
+                                 outputs=self.embeddings.outputs[0])
+        self.response_embedding = Model(inputs=self.embeddings.inputs,
+                                 outputs=self.embeddings.outputs[1])
+
+        # self.context_embedding = Model(inputs=self.obj_model.inputs,
+        #                          outputs=self.obj_model.get_layer(name="pooling").get_output_at(0))
+        # self.response_embedding = Model(inputs=self.obj_model.inputs,
+        #                          outputs=self.obj_model.get_layer(name="pooling").get_output_at(1))
 
         # self.score_model = Model(inputs=[self.obj_model.inputs[0], self.obj_model.inputs[1]],
         #                          outputs=self.obj_model.get_layer(name="score_model").get_output_at(0))
@@ -183,30 +183,18 @@ class RankingNetwork(metaclass=TfModelMeta):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
         if self.use_matrix:
             if self.token_embeddings and not self.char_embeddings:
-                if self.use_matrix:
-                    if self.shared_weights:
-                        self.duplet.get_layer(name="embedding").set_weights([self.emb_matrix])
-                    else:
-                        self.duplet.get_layer(name="embedding_a").set_weights([self.emb_matrix])
-                        self.duplet.get_layer(name="embedding_b").set_weights([self.emb_matrix])
+                if self.shared_weights:
+                    self.embeddings.get_layer(name="embedding").set_weights([self.emb_matrix])
+                else:
+                    self.embeddings.get_layer(name="embedding_a").set_weights([self.emb_matrix])
+                    self.embeddings.get_layer(name="embedding_b").set_weights([self.emb_matrix])
 
     def embedding_layer(self):
-        if self.shared_weights:
-            out_a = Embedding(self.toks_num,
-                            self.embedding_dim,
-                            input_length=self.max_sequence_length,
-                            trainable=True, name="embedding")
-            return out_a, out_a
-        else:
-            out_a = Embedding(self.toks_num,
-                            self.embedding_dim,
-                            input_length=self.max_sequence_length,
-                            trainable=True, name="embedding_a")
-            out_b = Embedding(self.toks_num,
-                            self.embedding_dim,
-                            input_length=self.max_sequence_length,
-                            trainable=True, name="embedding_b")
-            return out_a, out_b
+        out = Embedding(self.toks_num,
+                        self.embedding_dim,
+                        input_length=self.max_sequence_length,
+                        trainable=True, name="embedding")
+        return out
 
     def lstm_layer(self):
         """Create a LSTM layer of a model."""
@@ -216,56 +204,31 @@ class RankingNetwork(metaclass=TfModelMeta):
             ret_seq = False
         ker_in = glorot_uniform(seed=self.seed)
         rec_in = Orthogonal(seed=self.seed)
-        if self.shared_weights:
-            if self.recurrent == "bilstm" or self.recurrent is None:
-                out_a = Bidirectional(LSTM(self.hidden_dim,
-                                    input_shape=(self.max_sequence_length, self.embedding_dim,),
-                                    kernel_initializer=ker_in,
-                                    recurrent_initializer=rec_in,
-                                    return_sequences=ret_seq), merge_mode='concat')
-            elif self.recurrent == "lstm":
-                out_a = LSTM(self.hidden_dim,
-                           input_shape=(self.max_sequence_length, self.embedding_dim,),
-                           kernel_initializer=ker_in,
-                           recurrent_initializer=rec_in,
-                           return_sequences=ret_seq)
-            return out_a, out_a
-        else:
-            if self.recurrent == "bilstm" or self.recurrent is None:
-                out_a = Bidirectional(LSTM(self.hidden_dim,
-                                    input_shape=(self.max_sequence_length, self.embedding_dim,),
-                                    kernel_initializer=ker_in,
-                                    recurrent_initializer=rec_in,
-                                    return_sequences=ret_seq), merge_mode='concat')
-                out_b = Bidirectional(LSTM(self.hidden_dim,
-                                    input_shape=(self.max_sequence_length, self.embedding_dim,),
-                                    kernel_initializer=ker_in,
-                                    recurrent_initializer=rec_in,
-                                    return_sequences=ret_seq), merge_mode='concat')
-            elif self.recurrent == "lstm":
-                out_a = LSTM(self.hidden_dim,
-                           input_shape=(self.max_sequence_length, self.embedding_dim,),
-                           kernel_initializer=ker_in,
-                           recurrent_initializer=rec_in,
-                           return_sequences=ret_seq)
-                out_b = LSTM(self.hidden_dim,
-                           input_shape=(self.max_sequence_length, self.embedding_dim,),
-                           kernel_initializer=ker_in,
-                           recurrent_initializer=rec_in,
-                           return_sequences=ret_seq)
-            return out_a, out_b
+        if self.recurrent == "bilstm" or self.recurrent is None:
+            out = Bidirectional(LSTM(self.hidden_dim,
+                                input_shape=(self.max_sequence_length, self.embedding_dim,),
+                                kernel_initializer=ker_in,
+                                recurrent_initializer=rec_in,
+                                return_sequences=ret_seq), merge_mode='concat')
+        elif self.recurrent == "lstm":
+            out = LSTM(self.hidden_dim,
+                       input_shape=(self.max_sequence_length, self.embedding_dim,),
+                       kernel_initializer=ker_in,
+                       recurrent_initializer=rec_in,
+                       return_sequences=ret_seq)
+        return out
 
-    def triplet_loss(self, y_true, y_pred):
-        """Triplet loss function"""
-        if not self.hard_triplets_sampling:
-            return K.mean(K.maximum(self.margin - y_pred, 0.), axis=-1)
-
-    def duplet(self):
+    def embeddings_model(self):
         if self.token_embeddings and not self.char_embeddings:
             if self.use_matrix:
                 context = Input(shape=(self.max_sequence_length,))
                 response = Input(shape=(self.max_sequence_length,))
-                emb_layer_a, emb_layer_b = self.embedding_layer()
+                if self.shared_weights:
+                    emb_layer_a = self.embedding_layer()
+                    emb_layer_b = emb_layer_a
+                else:
+                    emb_layer_a = self.embedding_layer()
+                    emb_layer_b = self.embedding_layer()
                 emb_c = emb_layer_a(context)
                 emb_r = emb_layer_b(response)
             else:
@@ -311,7 +274,12 @@ class RankingNetwork(metaclass=TfModelMeta):
             emb_c = Lambda(lambda x: K.concatenate(x, axis=-1))([emb_c, emb_c_char])
             emb_r = Lambda(lambda x: K.concatenate(x, axis=-1))([emb_rp, emb_r_char])
 
-        lstm_layer_a, lstm_layer_b = self.lstm_layer()
+        if self.shared_weights:
+            lstm_layer_a = self.lstm_layer()
+            lstm_layer_b = lstm_layer_a
+        else:
+            lstm_layer_a = self.lstm_layer()
+            lstm_layer_b = self.lstm_layer()
         lstm_c = lstm_layer_a(emb_c)
         lstm_r = lstm_layer_b(emb_r)
         if self.pooling:
@@ -319,43 +287,42 @@ class RankingNetwork(metaclass=TfModelMeta):
             lstm_c = pooling_layer(lstm_c)
             lstm_r = pooling_layer(lstm_r)
 
-        if self.distance == "cos_similarity":
-            cosine_layer = Dot(normalize=True, axes=-1, name="score_model")
-            score = cosine_layer([lstm_c, lstm_r])
-            score = Lambda(lambda x: 1. - x)(score)
-        elif self.distance == "euclidian":
-            dist_score = Lambda(lambda x: K.expand_dims(self.euclidian_dist(x)), name="score_model")
-            score = dist_score([lstm_c, lstm_r])
-        elif self.distance == "sigmoid":
-            dist = Lambda(self.diff_mult_dist)([lstm_c, lstm_r])
-            score = Dense(1, activation='sigmoid', name="score_model")(dist)
-            score = Lambda(lambda x: 1. - x)(score)
-        model = Model([context, response], score)
+        model = Model([context, response], [lstm_c, lstm_r])
         return model
 
-    def duplet_model(self):
-        duplet = self.duplet
-        c_shape = K.int_shape(duplet.inputs[0])
-        r_shape = K.int_shape(duplet.inputs[1])
+    def prediction_model(self):
+        c_shape = K.int_shape(self.embeddings.inputs[0])
+        r_shape = K.int_shape(self.embeddings.inputs[1])
         c = Input(batch_shape=c_shape)
         r = Input(batch_shape=r_shape)
-        score = duplet([c, r])
+        emb_c, emb_r = self.embeddings([c, r])
+        # if self.distance == "cos_similarity":
+        #     cosine_layer = Dot(normalize=True, axes=-1, name="score_model")
+        #     score = cosine_layer([emb_c, emb_r])
+        #     score = Lambda(lambda x: 1. - x)(score)
+        if self.triplet_mode:
+            dist_score = Lambda(lambda x: K.expand_dims(self.euclidian_dist(x)), name="score_model")
+            score = dist_score([emb_c, emb_r])
+        else:
+            dist = Lambda(self.diff_mult_dist)([emb_c, emb_r])
+            score = Dense(1, activation='sigmoid', name="score_model")(dist)
+            score = Lambda(lambda x: 1. - x)(score)
         score = Lambda(lambda x: 1. - x)(score)
         model = Model([c, r], score)
         return model
 
-    def triplet_model(self):
-        duplet = self.duplet
-        c_shape = K.int_shape(duplet.inputs[0])
-        r_shape = K.int_shape(duplet.inputs[1])
-        c1 = Input(batch_shape=c_shape)
-        r1 = Input(batch_shape=r_shape)
-        c2 = Input(batch_shape=c_shape)
-        r2 = Input(batch_shape=r_shape)
-        score1 = duplet([c1, r1])
-        score2 = duplet([c2, r2])
-        score_diff = Subtract()([score2, score1])
-        model = Model([c1, r1, c2, r2], score_diff)
+    def loss_model(self):
+        c_shape = K.int_shape(self.embeddings.inputs[0])
+        r_shape = K.int_shape(self.embeddings.inputs[1])
+        c = Input(batch_shape=c_shape)
+        r = Input(batch_shape=r_shape)
+        emb_c, emb_r = self.embeddings([c, r])
+        if self.triplet_mode:
+            dist = Lambda(self._pairwise_distances)([emb_c, emb_r])
+        else:
+            dist = Lambda(self.diff_mult_dist)([emb_c, emb_r])
+            dist = Dense(1, activation='sigmoid', name="score_model")(dist)
+        model = Model([c, r], dist)
         return model
 
     def diff_mult_dist(self, inputs):
@@ -374,19 +341,62 @@ class RankingNetwork(metaclass=TfModelMeta):
         dist = K.sqrt(sum)
         return dist
 
+    def _pairwise_distances(self, inputs):
+        emb_c, emb_r = inputs
+        dot_product = K.dot(emb_c, K.transpose(emb_r))
+        square_norm = K.batch_dot(emb_c, emb_r, axes=1)
+        distances = K.transpose(square_norm) - 2.0 * dot_product - square_norm
+        distances = K.clip(distances, 0.0, None)
+        mask = K.cast(K.equal(distances, 0.0), K.dtype(distances))
+        distances = distances + mask * 1e-16
+        distances = K.sqrt(distances)
+        distances = distances * (1.0 - mask)
+        return distances
+
+    def triplet_loss(self, y_true, pairwise_dist):
+        """Triplet loss function"""
+        if self.hard_triplets_sampling:
+            triplet_loss = self.batch_hard_triplet_loss(y_true, pairwise_dist)
+        else:
+            triplet_loss = self.batch_all_triplet_loss(y_true, pairwise_dist)
+        return triplet_loss
+
+    def batch_all_triplet_loss(self, y_true, pairwise_dist):
+        anchor_positive_dist = K.expand_dims(pairwise_dist, 2)
+        anchor_negative_dist = K.expand_dims(pairwise_dist, 1)
+        triplet_loss = anchor_positive_dist - anchor_negative_dist + self.margin
+        mask = K.cast(self._get_triplet_mask(y_true, pairwise_dist), K.dtype(triplet_loss))
+        triplet_loss = mask * triplet_loss
+        triplet_loss = K.clip(triplet_loss, 0.0, None)
+        valid_triplets = K.cast(K.greater(triplet_loss, 1e-16), K.dtype(triplet_loss))
+        num_positive_triplets = K.sum(valid_triplets)
+        triplet_loss = K.sum(triplet_loss) / (num_positive_triplets + 1e-16)
+        return triplet_loss
+
+    def _get_triplet_mask(self, y_true, pairwise_dist):
+        # mask label(a) = label(p)
+        mask1 = K.expand_dims(K.equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 2)
+        mask1 = K.cast(mask1, K.dtype(pairwise_dist))
+        # mask a != p
+        mask2 = K.expand_dims(K.not_equal(K.expand_dims(pairwise_dist, 2), 0.0), 2)
+        mask2 = K.cast(mask2, K.dtype(pairwise_dist))
+        # mask label(n) != label(a)
+        mask3 = K.expand_dims(K.not_equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 1)
+        mask3 = K.cast(mask3, K.dtype(pairwise_dist))
+        return mask1 * mask2 * mask3
+
     def train_on_batch(self, batch, y):
-        b = [x for el in batch for x in el]
+        # b = [x for el in batch for x in el]
         if self.token_embeddings and not self.char_embeddings:
             # self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
-            self.obj_model.train_on_batch(x=b, y=np.asarray(y))
-        elif not self.token_embeddings and self.char_embeddings:self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
+            self.obj_model.train_on_batch(x=list(batch), y=np.asarray(y))
+        elif not self.token_embeddings and self.char_embeddings:
+            self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
         elif self.token_embeddings and self.char_embeddings:
             if self.use_matrix:
                 self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
             else:
                 b = [x[0] for x in batch]
-                for i in range(len(b)):
-                    b[i] = self.emb_dict.get_embs(b[i])
                 self.obj_model.train_on_batch(x=b, y=np.asarray(y))
 
     def predict_score_on_batch(self, batch):
@@ -415,7 +425,7 @@ class RankingNetwork(metaclass=TfModelMeta):
             if self.use_matrix:
                 return embedding.predict_on_batch(x=batch)
             else:
-                b = [self.emb_dict.get_embs(batch[i][:,:,0]) for i in range(len(batch))]
+                b = [batch[i][:,:,0] for i in range(len(batch))]
                 b = [np.concatenate([b[i], batch[i][:,:,1:]], axis=2) for i in range(len(batch))]
                 return embedding.predict_on_batch(x=b)
 
