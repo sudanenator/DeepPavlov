@@ -96,8 +96,8 @@ class RandomEmbedder(Component, Serializable):
         batch = [self._encode(sample, mean) for sample in batch]
         if self.pad_zero:
             batch = zero_pad(batch)
-        batch = [np.expand_dims(el, axis=0) for el in batch]
-        batch = np.vstack(batch)
+        # batch = [np.expand_dims(el, axis=0) for el in batch]
+        # batch = np.vstack(batch)
         return batch
 
     def __iter__(self) -> Generator:
@@ -123,7 +123,7 @@ class RandomEmbedder(Component, Serializable):
             try:
                 emb = self.tok2emb[t]
             except KeyError:
-                emb = np.random.uniform(-0.6, 0.6, self.embedding_dim)
+                emb = np.random.uniform(-0.6, 0.6, self.dim)
                 self.tok2emb[t] = emb
             embedded_tokens.append(emb)
 

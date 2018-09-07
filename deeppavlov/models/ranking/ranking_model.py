@@ -37,12 +37,16 @@ class RankingModel(NNModel):
         interact_pred_num: The number of the most relevant contexts and responses
             which model returns in the `interact` regime.
         update_embeddings: Whether to store and update context and response embeddings or not.
+
         **kwargs: Other parameters.
     """
 
     def __init__(self,
-                 interact_pred_num: int = 3,
+                 preprocess,
+                 context2emb_vocab: dict = None,
+                 response2emb_vocab: dict = None,
                  update_embeddings: bool = False,
+                 interact_pred_num: int = 3,
                  **kwargs):
 
         # Parameters for parent classes
@@ -54,9 +58,12 @@ class RankingModel(NNModel):
         super().__init__(save_path=save_path, load_path=load_path,
                          train_now=train_now, mode=mode)
 
+        self.preprocess = preprocess
         self.interact_pred_num = interact_pred_num
         self.train_now = train_now
-        self.upd_embs = update_embeddings
+        self.update_embeddings = update_embeddings
+        self.context2emb_vocab = context2emb_vocab
+        self.response2emb_vocab = response2emb_vocab
 
         opt = deepcopy(kwargs)
 
@@ -69,25 +76,22 @@ class RankingModel(NNModel):
         self.train_parameters = {par: opt[par] for par in train_parameters_names if par in opt}
 
 
-    @overrides
     def load(self):
         """Load the model from the last checkpoint if it exists. Otherwise instantiate a new model."""
         self._net = RankingNetwork(**self.network_parameters)
 
-    @overrides
     def save(self):
         """Save the model."""
         log.info('[saving model to {}]'.format(self.save_path.resolve()))
         self._net.save()
-        if self.upd_embs:
-            self.set_embeddings()
+        if self.update_embeddings:
+            self.update_sen_embs(self.context2emb_vocab, "context")
+            self.update_sen_embs(self.response2emb_vocab, "response")
         # self.embdict.save()
 
     @check_attr_true('train_now')
     def train_on_batch(self, batch, y):
         """Train the model on a batch."""
-        if self.upd_embs:
-            self.reset_embeddings()
         b = self.make_batch(batch)
         self._net.train_on_batch(b, y)
 
@@ -123,31 +127,22 @@ class RankingModel(NNModel):
             y_pred = [{"contexts": pred_cont, "responses": pred_resp}]
             return y_pred
 
-    def set_embeddings(self):
-        if self.dict.response2emb_vocab[0] is None:
-            r = []
-            for i in range(len(self.dict.response2toks_vocab)):
-                r.append(self.dict.response2toks_vocab[i])
-            r = self.dict.make_ints(r)
-            response_embeddings = self._net.predict_embedding([r, r], 512, type='response')
-            for i in range(len(self.dict.response2toks_vocab)):
-                self.dict.response2emb_vocab[i] = response_embeddings[i]
-        if self.dict.context2emb_vocab[0] is None:
-            c = []
-            for i in range(len(self.dict.context2toks_vocab)):
-                c.append(self.dict.context2toks_vocab[i])
-            c = self.dict.make_ints(c)
-            context_embeddings = self._net.predict_embedding([c, c], 512, type='context')
-            for i in range(len(self.dict.context2toks_vocab)):
-                self.dict.context2emb_vocab[i] = context_embeddings[i]
-
-    def reset_embeddings(self):
-        if self.dict.response2emb_vocab[0] is not None:
-            for i in range(len(self.dict.response2emb_vocab)):
-                self.dict.response2emb_vocab[i] = None
-        if self.dict.context2emb_vocab[0] is not None:
-            for i in range(len(self.dict.context2emb_vocab)):
-                self.dict.context2emb_vocab[i] = None
+    def update_sen_embs(self, sen2emb_vocab, type):
+        bs = 512
+        r = list(sen2emb_vocab.keys())
+        num_batches = len(r) // bs
+        sen_embeddings = []
+        for i in range(num_batches):
+            sen = r[i * bs: (i+1) * bs]
+            batch = self.preprocess(list(zip([sen, sen])))
+            sen_embeddings.append(self._net.predict_embedding_on_batch(batch, type=type))
+        if len(r) % bs != 0:
+            sen = r[num_batches * bs:]
+            batch = self.preprocess(zip([sen, sen]))
+            sen_embeddings.append(self._net.predict_embedding_on_batch(batch, type=type))
+        sen_embeddings = np.vstack(sen_embeddings)
+        for i, el in enumerate(r):
+            sen2emb_vocab[el] = sen_embeddings[i]
 
     def shutdown(self):
         pass

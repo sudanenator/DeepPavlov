@@ -101,7 +101,7 @@ class RankingVocab(Estimator):
         self.char_trunc = char_trunc
         self.tok_dynamic_batch = tok_dynamic_batch
         self.char_dynamic_batch = char_dynamic_batch
-        self.upd_embs = update_embeddings
+        self.update_embeddings = update_embeddings
         self.num_ranking_samples = num_ranking_samples
         self.pos_pool_sample = pos_pool_sample
         self.pos_pool_rank = pos_pool_rank
@@ -131,17 +131,18 @@ class RankingVocab(Estimator):
         self.int2char_vocab = {}
         self.int2tok_vocab = {}
         self.tok2int_vocab = {}
-        self.response2toks_vocab = {}
-        self.response2emb_vocab = {}
-        self.context2toks_vocab = {}
+        self.int2context_vocab = {}
         self.context2emb_vocab = {}
+        self.int2response_vocab = {}
+        self.response2emb_vocab = {}
 
         random.seed(seed)
 
         super().__init__(load_path=self.load_path, save_path=self.save_path, **kwargs)
 
-        if self.embedder == "random":
-            self.embeddings_model = dict()
+        # if self.embedder == "random":
+        #     self.embeddings_model = dict()
+        self.embedder = embedder
 
         self.len_vocab = 0
         self.len_char_vocab = 0
@@ -163,9 +164,9 @@ class RankingVocab(Estimator):
             self.len_vocab = len(self.tok2int_vocab)
             self.len_char_vocab = len(self.char2int_vocab)
 
-            self.build_context2toks_vocab(x)
-            self.build_response2toks_vocab(x)
-            if self.upd_embs:
+            self.build_int2context_vocab(x)
+            self.build_int2response_vocab(x)
+            if self.update_embeddings:
                 self.build_context2emb_vocab()
                 self.build_response2emb_vocab()
             self.build_emb_matrix()
@@ -188,7 +189,7 @@ class RankingVocab(Estimator):
         self.build_tok2int_vocab()
         self.load_context2toks()
         self.load_response2toks()
-        if self.upd_embs:
+        if self.update_embeddings:
             self.load_cont()
             self.load_resp()
 
@@ -206,7 +207,7 @@ class RankingVocab(Estimator):
         self.save_int2tok()
         self.save_context2toks()
         self.save_response2toks()
-        if self.upd_embs:
+        if self.update_embeddings:
             self.save_cont()
             self.save_resp()
         mark_done(self.save_path)
@@ -221,29 +222,27 @@ class RankingVocab(Estimator):
         self.int2tok_vocab = {el[0]+1:el[1] for el in enumerate(tok)}
         self.int2tok_vocab[0] = '<UNK>'
 
-    def build_response2toks_vocab(self, x):
-        r = [el[1] for el in x]
-        r = set(r)
-        self.response2toks_vocab = {el[0]: el[1].split() for el in enumerate(r)}
-
-    def build_context2toks_vocab(self, x):
-        c = [el[0] for el in x]
-        c = set(c)
-        self.context2toks_vocab = {el[0]: el[1].split() for el in enumerate(c)}
-
     def build_char2int_vocab(self):
         self.char2int_vocab = {el[1]: el[0] for el in self.int2char_vocab.items()}
 
     def build_tok2int_vocab(self):
         self.tok2int_vocab = {el[1]: el[0] for el in self.int2tok_vocab.items()}
 
+    def build_int2response_vocab(self, x):
+        r = [el[1] for el in x]
+        r = set(r)
+        self.int2response_vocab = {el[0]: el[1] for el in enumerate(r)}
+
+    def build_int2context_vocab(self, x):
+        c = [el[0] for el in x]
+        c = set(c)
+        self.int2response_vocab = {el[0]: el[1] for el in enumerate(c)}
+
     def build_response2emb_vocab(self):
-        for i in range(len(self.response2toks_vocab)):
-            self.response2emb_vocab[i] = None
+        self.response2emb_vocab = {el: None for el in self.int2response_vocab.values()}
 
     def build_context2emb_vocab(self):
-        for i in range(len(self.context2toks_vocab)):
-            self.context2emb_vocab[i] = None
+        self.context2emb_vocab = {el: None for el in self.int2context_vocab.values()}
 
     def conts2toks(self, conts_li):
         toks_li = [self.context2toks_vocab[cont] for cont in conts_li]
@@ -344,29 +343,27 @@ class RankingVocab(Estimator):
             data = f.readlines()
         self.int2tok_vocab = {int(el.split('\t')[0]): el.split('\t')[1][:-1] for el in data}
 
-    def save_context2toks(self):
+    def save_int2context(self):
         with self.cont_save_path.open('w') as f:
             f.write('\n'.join(['\t'.join([str(el[0]), ' '.join(el[1])]) for el in self.context2toks_vocab.items()]))
 
-    def load_context2toks(self):
+    def load_int2context(self):
         with self.cont_load_path.open('r') as f:
             data = f.readlines()
-        self.context2toks_vocab = {int(el.split('\t')[0]): el.split('\t')[1][:-1].split(' ') for el in data}
+        self.int2context_vocab = {int(el.split('\t')[0]): el.split('\t')[1][:-1] for el in data}
 
-    def save_response2toks(self):
+    def save_int2response(self):
         with self.resp_save_path.open('w') as f:
             f.write(
-                '\n'.join(['\t'.join([str(el[0]), ' '.join(el[1])]) for el in self.response2toks_vocab.items()]))
+                '\n'.join(['\t'.join([str(el[0]), el[1]]) for el in self.response2toks_vocab.items()]))
 
-    def load_response2toks(self):
+    def load_int2response(self):
         with self.resp_load_path.open('r') as f:
             data = f.readlines()
-        self.response2toks_vocab = {int(el.split('\t')[0]): el.split('\t')[1][:-1].split(' ') for el in data}
+        self.int2response_vocab = {int(el.split('\t')[0]): el.split('\t')[1][:-1] for el in data}
 
     def save_cont(self):
-        context_embeddings = []
-        for i in range(len(self.context2emb_vocab)):
-            context_embeddings.append(self.context2emb_vocab[i])
+        context_embeddings = list(self.context2emb_vocab.values())
         context_embeddings = np.vstack(context_embeddings)
         np.save(self.cemb_save_path, context_embeddings)
 
@@ -376,9 +373,7 @@ class RankingVocab(Estimator):
             self.context2emb_vocab[i] = context_embeddings_arr[i]
 
     def save_resp(self):
-        response_embeddings = []
-        for i in range(len(self.response2emb_vocab)):
-            response_embeddings.append(self.response2emb_vocab[i])
+        response_embeddings = list(self.response2emb_vocab.values())
         response_embeddings = np.vstack(response_embeddings)
         np.save(self.remb_save_path, response_embeddings)
 
