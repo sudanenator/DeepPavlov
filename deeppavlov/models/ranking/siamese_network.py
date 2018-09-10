@@ -167,14 +167,14 @@ class SiameseNetwork(metaclass=TfModelMeta):
         # if self.distance == "cos_similarity":
         #     cosine_layer = Dot(normalize=True, axes=-1, name="score_model")
         #     score = cosine_layer([emb_c, emb_r])
-        #     score = Lambda(lambda x: 1. - x)(score)
+        #     score = Lambda(lambda x: 1. - K.squeeze(x, -1))(score)
         if self.triplet_mode:
-            dist_score = Lambda(lambda x: K.expand_dims(self.euclidian_dist(x)), name="score_model")
+            dist_score = Lambda(lambda x: self.euclidian_dist(x), name="score_model")
             score = dist_score([emb_c, emb_r])
         else:
             dist = Lambda(self.diff_mult_dist)([emb_c, emb_r])
             score = Dense(1, activation='sigmoid', name="score_model")(dist)
-            score = Lambda(lambda x: 1. - x)(score)
+            score = Lambda(lambda x: 1. - K.squeeze(x, -1))(score)
         score = Lambda(lambda x: 1. - x)(score)
         model = Model([c, r], score)
         return model

@@ -24,7 +24,7 @@ from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.nn_model import NNModel
 from deeppavlov.models.ranking.siamese_network import SiameseNetwork
 from deeppavlov.core.common.log import get_logger
-from typing import Union, List, Tuple, Dict
+from typing import Union, List, Tuple, Dict, Callable
 
 log = get_logger(__name__)
 
@@ -42,7 +42,8 @@ class SiameseModel(NNModel):
     """
 
     def __init__(self,
-                 preprocess,
+                 num_context_turns: int = 1,
+                 preprocess: Callable = None,
                  context2emb_vocab: dict = None,
                  response2emb_vocab: dict = None,
                  update_embeddings: bool = False,
@@ -58,6 +59,7 @@ class SiameseModel(NNModel):
         super().__init__(save_path=save_path, load_path=load_path,
                          train_now=train_now, mode=mode)
 
+        self.num_context_turns = num_context_turns
         self.preprocess = preprocess
         self.interact_pred_num = interact_pred_num
         self.train_now = train_now
@@ -102,9 +104,9 @@ class SiameseModel(NNModel):
             y_pred = []
             b = self.make_batch(batch)
             for el in b[1:]:
-                yp = self._net.predict_score_on_batch([b[0], el])
-                if len(b) == 2:
-                    yp = np.squeeze(yp)
+                yp = self._net.predict_score_on_batch([b[0:self.num_context_turns], el])
+                if len(b[self.num_context_turns]) > 1:
+                    yp = np.expand_dims(yp, 1)
                 y_pred.append(yp)
             y_pred = np.hstack(y_pred)
             return y_pred

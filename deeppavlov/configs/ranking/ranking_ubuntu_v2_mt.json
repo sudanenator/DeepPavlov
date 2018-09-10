@@ -1,10 +1,12 @@
 {
   "dataset_reader": {
-    "name": "insurance_reader",
-    "data_path": "./insurance_data"
+    "name": "ubuntu_v2_reader_mt",
+    "data_path": "./ubuntu_v2_data"
   },
   "dataset_iterator": {
     "name": "siamese_iterator",
+    "random_batches": true,
+    "batches_per_epoch": 10,
     "seed": 243
   },
   "chainer": {
@@ -12,14 +14,14 @@
     "in_y": ["y"],
     "pipe": [
       {
-        "id": "insurance_vocab",
+        "id": "preproc",
         "name": "siamese_preprocessor",
         "save_path": "vocabs/ins_tok.dict",
         "load_path": "vocabs/ins_tok.dict",
         "use_matrix": true,
         "num_ranking_samples": 10,
+        "num_context_turns": 3,
         "max_sequence_length": 200,
-        "update_embeddings": false,
         "fit_on": ["x"],
         "in": ["x"],
         "out": ["x_proc"],
@@ -38,8 +40,8 @@
         {
           "id": "siam_embedder",
           "name": "fasttext",
-          "load_path": "insurance_embeddings/wiki.en.bin",
-          "save_path": "insurance_embeddings/wiki.en.bin",
+          "load_path": "ubuntu_v2_embeddings/wiki.en.bin",
+          "save_path": "ubuntu_v2_embeddings/wiki.en.bin",
           "dim": 300
         }
       },
@@ -57,26 +59,19 @@
         "device_num": 0,
         "train_now": true,
         "network": {
-          "name": "bilstm_nn",
+          "name": "bilstm_gru_nn",
+          "num_context_turns": "#preproc.num_context_turns",
           "len_vocab": "#siam_vocab.len",
-          "use_matrix": "#insurance_vocab.use_matrix",
-          "max_sequence_length": "#insurance_vocab.max_sequence_length",
+          "use_matrix": "#preproc.use_matrix",
+          "max_sequence_length": "#preproc.max_sequence_length",
           "embedding_dim": "#siam_embedder.dim",
           "seed": 243,
-          "reccurent": "bilstm",
-          "max_pooling": true,
-          "shared_weights": true,
           "hidden_dim": 300
         },
         "emb_matrix": "#embeddings.emb_mat",
+        "num_context_turns": "#preproc.num_context_turns",
         "learning_rate": 1e-3,
         "triplet_loss": false,
-        "hard_triplets": true,
-        "distance": "euclidian",
-        "margin": 0.1,
-        "update_embeddings": "#insurance_vocab.update_embeddings",
-        "preprocess": "#insurance_vocab.__call__",
-        "interact_pred_num": 3,
         "save_path": "insurance_ranking/model_weights.h5",
         "load_path": "insurance_ranking/model_weights.h5"
       }
@@ -84,14 +79,14 @@
     "out": ["y_predicted"]
   },
   "train": {
-    "epochs": 3,
+    "epochs": 200,
     "batch_size": 128,
     "pytest_max_batches": 2,
-    "train_metrics": [],
-    "metrics": ["r@1_insQA", "rank_response"],
-    "validation_patience": 3,
+    "train_metrics": ["accuracy"],
+    "metrics": ["r@1", "rank_response"],
+    "validation_patience": 10,
     "val_every_n_epochs": 1,
-    "log_every_n_batches": 10
+    "log_every_n_batches": 1
   },
   "metadata": {
     "requirements": [
@@ -103,14 +98,13 @@
       "server_utils": "Ranker"
     },
     "download": [
-      "http://lnsigo.mipt.ru/export/deeppavlov_data/insurance_ranking.tar.gz",
       {
-        "url": "http://lnsigo.mipt.ru/export/datasets/insuranceQA-master.zip",
-        "subdir": "insurance_data"
+        "url": "http://lnsigo.mipt.ru/export/datasets/ubuntu_v2_data.tar.gz",
+        "subdir": "ubuntu_v2_data"
       },
       {
         "url": "http://lnsigo.mipt.ru/export/embeddings/wiki.en.bin",
-        "subdir": "insurance_embeddings"
+        "subdir": "ubuntu_v2_embeddings"
       }
     ]
   }

@@ -1,4 +1,4 @@
-from keras.layers import Input, LSTM, Embedding, GlobalMaxPooling1D, Lambda, subtract, Conv2D, Dense, Activation
+from keras.layers import Input, LSTM, Embedding, GlobalMaxPooling1D, Lambda, subtract, Conv2D, Dense, Activation, GRU
 from keras.layers.merge import Dot, Subtract, Add, Multiply
 from keras.models import Model
 from keras.layers.wrappers import Bidirectional
@@ -18,8 +18,8 @@ from deeppavlov.models.ranking.siamese_embeddings_network import SiameseEmbeddin
 
 log = get_logger(__name__)
 
-@register('bilstm_nn')
-class BiLSTMNetwork(SiameseEmbeddingsNetwork):
+@register('bilstm_gru_nn')
+class BiLSTMGRUNetwork(SiameseEmbeddingsNetwork):
 
     """Class to perform context-response matching with neural networks.
 
@@ -66,10 +66,10 @@ class BiLSTMNetwork(SiameseEmbeddingsNetwork):
     def __init__(self,
                  len_vocab: int,
                  max_sequence_length: int,
+                 num_context_turns: int,
                  len_char_vocab: int = None,
                  max_token_length: int = None,
                  seed: int = None,
-                 shared_weights: bool = True,
                  token_embeddings: bool = True,
                  use_matrix: bool = False,
                  tok_dynamic_batch: bool = False,
@@ -77,19 +77,15 @@ class BiLSTMNetwork(SiameseEmbeddingsNetwork):
                  char_embeddings: bool = False,
                  char_dynamic_batch: bool = False,
                  char_emb_dim: int = 32,
-                 reccurent: str = "bilstm",
                  hidden_dim: int = 300,
-                 max_pooling: bool = True,
                  **kwargs):
 
         self.toks_num = len_vocab
+        self.num_context_turns = num_context_turns
         self.use_matrix = use_matrix
         self.seed = seed
         self.hidden_dim = hidden_dim
         self.embedding_dim = embedding_dim
-        self.shared_weights = shared_weights
-        self.pooling = max_pooling
-        self.recurrent = reccurent
         self.token_embeddings = token_embeddings
         self.char_embeddings = char_embeddings
         self.chars_num = len_char_vocab
@@ -115,94 +111,36 @@ class BiLSTMNetwork(SiameseEmbeddingsNetwork):
 
     def lstm_layer(self):
         """Create a LSTM layer of a model."""
-        if self.pooling:
-            ret_seq = True
-        else:
-            ret_seq = False
         ker_in = glorot_uniform(seed=self.seed)
         rec_in = Orthogonal(seed=self.seed)
-        if self.recurrent == "bilstm" or self.recurrent is None:
-            out = Bidirectional(LSTM(self.hidden_dim,
-                                input_shape=(self.max_sequence_length, self.embedding_dim,),
-                                kernel_initializer=ker_in,
-                                recurrent_initializer=rec_in,
-                                return_sequences=ret_seq), merge_mode='concat')
-        elif self.recurrent == "lstm":
-            out = LSTM(self.hidden_dim,
-                       input_shape=(self.max_sequence_length, self.embedding_dim,),
-                       kernel_initializer=ker_in,
-                       recurrent_initializer=rec_in,
-                       return_sequences=ret_seq)
+        out = Bidirectional(LSTM(self.hidden_dim,
+                            input_shape=(self.max_sequence_length, self.embedding_dim,),
+                            kernel_initializer=ker_in,
+                            recurrent_initializer=rec_in,
+                            return_sequences=True), merge_mode='concat')
         return out
 
     def embeddings_model(self):
-        if self.token_embeddings and not self.char_embeddings:
-            if self.use_matrix:
-                context = Input(shape=(self.max_sequence_length,))
-                response = Input(shape=(self.max_sequence_length,))
-                if self.shared_weights:
-                    emb_layer_a = self.embedding_layer()
-                    emb_layer_b = emb_layer_a
-                else:
-                    emb_layer_a = self.embedding_layer()
-                    emb_layer_b = self.embedding_layer()
-                emb_c = emb_layer_a(context)
-                emb_r = emb_layer_b(response)
-            else:
-                context = Input(shape=(self.max_sequence_length, self.embedding_dim,))
-                response = Input(shape=(self.max_sequence_length, self.embedding_dim,))
-                emb_c = context
-                emb_r = response
-        elif not self.token_embeddings and self.char_embeddings:
-            context = Input(shape=(self.max_sequence_length, self.max_token_length,))
-            response = Input(shape=(self.max_sequence_length, self.max_token_length,))
-
-            char_cnn_layer = keras_layers.char_emb_cnn_func(n_characters=self.chars_num,
-                                                            char_embedding_dim=self.char_emb_dim)
-            emb_c = char_cnn_layer(context)
-            emb_r = char_cnn_layer(response)
-
-        elif self.token_embeddings and self.char_embeddings:
-            context = Input(shape=(self.max_sequence_length, self.max_token_length,))
-            response = Input(shape=(self.max_sequence_length, self.max_token_length,))
-
-            if self.use_matrix:
-                c_tok = Lambda(lambda x: x[:,:,0])(context)
-                r_tok = Lambda(lambda x: x[:,:,0])(response)
-                emb_layer_a, emb_layer_b = self.embedding_layer()
-                emb_c = emb_layer_a(c_tok)
-                emb_rp = emb_layer_b(r_tok)
-                c_char = Lambda(lambda x: x[:,:,1:])(context)
-                r_char = Lambda(lambda x: x[:,:,1:])(response)
-            else:
-                c_tok = Lambda(lambda x: x[:,:,:self.embedding_dim])(context)
-                r_tok = Lambda(lambda x: x[:,:,:self.embedding_dim])(response)
-                emb_c = c_tok
-                emb_rp = r_tok
-                c_char = Lambda(lambda x: x[:,:,self.embedding_dim:])(context)
-                r_char = Lambda(lambda x: x[:,:,self.embedding_dim:])(response)
-
-            char_cnn_layer = keras_layers.char_emb_cnn_func(n_characters=self.chars_num,
-                                                            char_embedding_dim=self.char_emb_dim)
-
-            emb_c_char = char_cnn_layer(c_char)
-            emb_r_char = char_cnn_layer(r_char)
-
-            emb_c = Lambda(lambda x: K.concatenate(x, axis=-1))([emb_c, emb_c_char])
-            emb_r = Lambda(lambda x: K.concatenate(x, axis=-1))([emb_rp, emb_r_char])
-
-        if self.shared_weights:
-            lstm_layer_a = self.lstm_layer()
-            lstm_layer_b = lstm_layer_a
+        if self.use_matrix:
+            input = (self.num_context_turns + 1) * [Input(shape=(self.max_sequence_length,))]
+            context = input[self.num_context_turns]
+            response = input[-1]
+            emb_layer = self.embedding_layer()
+            emb_c = [emb_layer(el) for el in context]
+            emb_r = emb_layer(response)
         else:
-            lstm_layer_a = self.lstm_layer()
-            lstm_layer_b = self.lstm_layer()
-        lstm_c = lstm_layer_a(emb_c)
-        lstm_r = lstm_layer_b(emb_r)
-        if self.pooling:
-            pooling_layer = GlobalMaxPooling1D(name="pooling")
-            lstm_c = pooling_layer(lstm_c)
-            lstm_r = pooling_layer(lstm_r)
-
-        model = Model([context, response], [lstm_c, lstm_r])
+            context = self.num_context_turns * [Input(shape=(self.max_sequence_length, self.embedding_dim,))]
+            response = Input(shape=(self.max_sequence_length, self.embedding_dim,))
+            emb_c = context
+            emb_r = response
+        lstm_layer = self.lstm_layer()
+        lstm_c = [lstm_layer(el) for el in emb_c]
+        lstm_r = lstm_layer(emb_r)
+        pooling_layer = GlobalMaxPooling1D()
+        lstm_c = [pooling_layer(el) for el in lstm_c]
+        lstm_r = pooling_layer(lstm_r)
+        lstm_c = [Lambda(K.expand_dims(el, 1)) for el in lstm_c]
+        gru_layer = GRU(2 * self.hidden_dim)
+        gru_c = gru_layer(Lambda(K.concatenate(lstm_c, 1)))
+        model = Model([context, response], [gru_c, lstm_r])
         return model

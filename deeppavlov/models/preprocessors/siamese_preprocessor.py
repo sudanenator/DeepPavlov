@@ -83,6 +83,7 @@ class SiamesePreprocessor(Estimator):
                  char_dynamic_batch: bool = False,
                  update_embeddings: bool = False,
                  num_ranking_samples: int = 10,
+                 num_context_turns: int = 1,
                  tokenizer: Callable = None,
                  embedder: Callable = "random",
                  vocab: Callable = "dialog_vocab",
@@ -101,6 +102,7 @@ class SiamesePreprocessor(Estimator):
         self.char_dynamic_batch = char_dynamic_batch
         self.update_embeddings = update_embeddings
         self.num_ranking_samples = num_ranking_samples
+        self.num_context_turns = num_context_turns
         self.tokenizer = tokenizer
         self.embedder = embedder
         self.vocab = vocab
@@ -122,7 +124,7 @@ class SiamesePreprocessor(Estimator):
             self.vocab.fit(x_tok)
 
     def __call__(self, x):
-        x_cut = [el[:self.num_ranking_samples+1] for el in x]
+        x_cut = [el[:self.num_context_turns+self.num_ranking_samples] for el in x]
         x_reshape = []
         for i in range(len(x_cut[0])):
             x_reshape.append([el[i] for el in x_cut])
