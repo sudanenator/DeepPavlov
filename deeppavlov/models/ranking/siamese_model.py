@@ -105,7 +105,7 @@ class SiameseModel(NNModel):
                 yp = self._net.predict_score_on_batch([b[0], el])
                 if len(b) == 2:
                     yp = np.squeeze(yp)
-                y_pred.append()
+                y_pred.append(yp)
             y_pred = np.hstack(y_pred)
             return y_pred
 
