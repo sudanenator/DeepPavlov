@@ -52,14 +52,8 @@ class SiameseNetwork(metaclass=TfModelMeta):
             to get the actual dimensionality ``hidden_dim`` should be doubled.
         max_pooling: Whether to use max-pooling operation to get context (response) vector representation.
             If ``False``, the last hidden state of the RNN will be used.
-        hard_triplets_sampling: Whether to use hard triplets sampling to train the model
+        hard_triplets: Whether to use hard triplets sampling to train the model
             i.e. to choose negative samples close to positive ones.
-        hardest_positives: Whether to use only one hardest positive sample per each anchor sample.
-            It is only used when ``hard_triplets_sampling`` is set to ``True``.
-        semi_hard_negatives: Whether hard negative samples should be further away from anchor samples
-            than positive samples or not. It is only used when ``hard_triplets_sampling`` is set to ``True``.
-        num_hardest_negatives: It is only used when ``hard_triplets_sampling`` is set to ``True``
-            and ``semi_hard_negatives`` is set to ``False``.
     """
 
     def __init__(self,
@@ -81,10 +75,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
                  reccurent: str = "bilstm",
                  hidden_dim: int = 300,
                  max_pooling: bool = True,
-                 hard_triplets_sampling: bool = False,
-                 hardest_positives: bool = False,
-                 semi_hard_negatives: bool = False,
-                 num_hardest_negatives: int = None,
+                 hard_triplets: bool = False,
                  network: Callable = "bilstm_nn",
                  **kwargs):
 
@@ -105,10 +96,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
         self.chars_num = len_char_vocab
         self.char_emb_dim = char_emb_dim
         self.highway_on_top = highway_on_top
-        self.hard_triplets_sampling = hard_triplets_sampling
-        self.hardest_positives = hardest_positives
-        self.semi_hard_negatives = semi_hard_negatives
-        self.num_hardest_negatives = num_hardest_negatives
+        self.hard_triplets = hard_triplets
         self.triplet_mode = triplet_loss
 
         self.sess = self._config_session()
@@ -223,9 +211,12 @@ class SiameseNetwork(metaclass=TfModelMeta):
 
     def _pairwise_distances(self, inputs):
         emb_c, emb_r = inputs
-        dot_product = K.dot(emb_c, K.transpose(emb_r))
-        square_norm = K.batch_dot(emb_c, emb_r, axes=1)
-        distances = K.transpose(square_norm) - 2.0 * dot_product - square_norm
+        bs = K.shape(emb_c)[0]
+        embeddings = K.concatenate([emb_c, emb_r], 0)
+        dot_product = K.dot(embeddings, K.transpose(embeddings))
+        square_norm = K.batch_dot(embeddings, embeddings, axes=1)
+        distances = K.transpose(square_norm) - 2.0 * dot_product + square_norm
+        distances = K.slice(distances, (0, bs), (bs, bs))
         distances = K.clip(distances, 0.0, None)
         mask = K.cast(K.equal(distances, 0.0), K.dtype(distances))
         distances = distances + mask * 1e-16
@@ -235,7 +226,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
 
     def triplet_loss(self, y_true, pairwise_dist):
         """Triplet loss function"""
-        if self.hard_triplets_sampling:
+        if self.hard_triplets:
             triplet_loss = self.batch_hard_triplet_loss(y_true, pairwise_dist)
         else:
             triplet_loss = self.batch_all_triplet_loss(y_true, pairwise_dist)
@@ -245,7 +236,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
         anchor_positive_dist = K.expand_dims(pairwise_dist, 2)
         anchor_negative_dist = K.expand_dims(pairwise_dist, 1)
         triplet_loss = anchor_positive_dist - anchor_negative_dist + self.margin
-        mask = K.cast(self._get_triplet_mask(y_true, pairwise_dist), K.dtype(triplet_loss))
+        mask = self._get_triplet_mask(y_true, pairwise_dist)
         triplet_loss = mask * triplet_loss
         triplet_loss = K.clip(triplet_loss, 0.0, None)
         valid_triplets = K.cast(K.greater(triplet_loss, 1e-16), K.dtype(triplet_loss))
@@ -253,17 +244,56 @@ class SiameseNetwork(metaclass=TfModelMeta):
         triplet_loss = K.sum(triplet_loss) / (num_positive_triplets + 1e-16)
         return triplet_loss
 
+    def batch_hard_triplet_loss(self, y_true, pairwise_dist):
+        mask_anchor_positive = self._get_anchor_positive_triplet_mask(y_true, pairwise_dist)
+        anchor_positive_dist = mask_anchor_positive * pairwise_dist
+        hardest_positive_dist = K.max(anchor_positive_dist, axis=1, keepdims=True)
+        mask_anchor_negative = self._get_anchor_negative_triplet_mask(y_true, pairwise_dist)
+        anchor_negative_dist = mask_anchor_negative * pairwise_dist
+        mask_anchor_negative = self._get_semihard_anchor_negative_triplet_mask(anchor_negative_dist,
+                                                                               hardest_positive_dist,
+                                                                               mask_anchor_negative)
+        max_anchor_negative_dist = K.max(pairwise_dist, axis=1, keepdims=True)
+        anchor_negative_dist = pairwise_dist + max_anchor_negative_dist * (1.0 - mask_anchor_negative)
+        hardest_negative_dist = K.min(anchor_negative_dist, axis=1, keepdims=True)
+        triplet_loss = tf.maximum(hardest_positive_dist - hardest_negative_dist + self.margin, 0.0)
+        triplet_loss = K.mean(triplet_loss)
+        return triplet_loss
+
     def _get_triplet_mask(self, y_true, pairwise_dist):
-        # mask label(a) = label(p)
+        # mask label(a) != label(p)
         mask1 = K.expand_dims(K.equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 2)
         mask1 = K.cast(mask1, K.dtype(pairwise_dist))
-        # mask a != p
+        # mask a == p
         mask2 = K.expand_dims(K.not_equal(K.expand_dims(pairwise_dist, 2), 0.0), 2)
         mask2 = K.cast(mask2, K.dtype(pairwise_dist))
-        # mask label(n) != label(a)
+        # mask label(n) == label(a)
         mask3 = K.expand_dims(K.not_equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 1)
         mask3 = K.cast(mask3, K.dtype(pairwise_dist))
         return mask1 * mask2 * mask3
+
+    def _get_anchor_positive_triplet_mask(self, y_true, pairwise_dist):
+        # mask label(a) != label(p)
+        mask1 = K.expand_dims(K.equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 2)
+        mask1 = K.cast(mask1, K.dtype(pairwise_dist))
+        # mask a == p
+        mask2 = K.expand_dims(K.not_equal(K.expand_dims(pairwise_dist, 2), 0.0), 2)
+        mask2 = K.cast(mask2, K.dtype(pairwise_dist))
+        return mask1 * mask2
+
+    def _get_anchor_negative_triplet_mask(self, y_true, pairwise_dist):
+        # mask label(n) == label(a)
+        mask = K.expand_dims(K.not_equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 1)
+        mask = K.cast(mask, K.dtype(pairwise_dist))
+        return mask
+
+    def _get_semihard_anchor_negative_triplet_mask(self, negative_dist, hardest_positive_dist, mask_negative):
+        # mask max(dist(a,p)) < dist(a,n)
+        mask = K.greater(negative_dist, hardest_positive_dist)
+        mask = K.cast(mask, K.dtype(negative_dist))
+        mask_semihard = K.cast(K.greater(K.sum(mask, 1), 0.0), K.dtype(negative_dist))
+        mask = mask_negative * (1 - mask_semihard) + mask * mask_semihard
+        return mask
 
     def train_on_batch(self, batch, y):
         # b = [x for el in batch for x in el]
