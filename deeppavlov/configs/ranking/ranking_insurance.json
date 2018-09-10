@@ -4,7 +4,7 @@
     "data_path": "./insurance_data"
   },
   "dataset_iterator": {
-    "name": "ranking_iterator",
+    "name": "siamese_iterator",
     "seed": 243
   },
   "chainer": {
@@ -13,52 +13,67 @@
     "pipe": [
       {
         "id": "insurance_vocab",
-        "name": "ranking_vocab",
-        "save_path": "vocabs/",
-        "load_path": "vocabs/",
+        "name": "siamese_preprocessor",
+        "save_path": "vocabs/ins_tok.dict",
+        "load_path": "vocabs/ins_tok.dict",
         "use_matrix": true,
         "num_ranking_samples": 10,
         "max_sequence_length": 200,
-        "tokenizer": {"name": "split_tokenizer"},
-        "embedder":
-        {
-          "name": "fasttext",
-          "load_path": "insurance_embeddings/wiki.en.bin",
-          "dim": 300
-        },
-        "update_embeddings": true,
+        "update_embeddings": false,
         "fit_on": ["x"],
         "in": ["x"],
-        "out": ["x_proc"]
+        "out": ["x_proc"],
+        "tokenizer":
+        {
+          "name": "split_tokenizer"
+        },
+        "vocab":
+        {
+          "id": "siam_vocab",
+          "name":"dialog_vocab",
+          "save_path": "vocabs/tok.dict",
+          "load_path": "vocabs/tok.dict"
+        },
+        "embedder":
+        {
+          "id": "siam_embedder",
+          "name": "fasttext",
+          "load_path": "insurance_embeddings/wiki.en.bin",
+          "save_path": "insurance_embeddings/wiki.en.bin",
+          "dim": 300
+        }
+      },
+      {
+        "id": "embeddings",
+        "name": "emb_mat_assembler",
+        "embedder": "#siam_embedder",
+        "vocab": "#siam_vocab"
       },
       {
         "in": ["x_proc"],
         "in_y": ["y"],
         "out": ["y_predicted"],
-        "name": "ranking_model",
+        "name": "siamese_model",
+        "device_num": 0,
+        "train_now": true,
         "network": {
           "name": "bilstm_nn",
-          "device_num": 0,
-          "train_now": true,
-          "len_vocab": "#insurance_vocab.len_vocab",
-          "len_char_vocab": "#insurance_vocab.len_char_vocab",
+          "len_vocab": "#siam_vocab.len",
           "use_matrix": "#insurance_vocab.use_matrix",
-          "emb_matrix": "#insurance_vocab.emb_matrix",
           "max_sequence_length": "#insurance_vocab.max_sequence_length",
-          "embedding_dim": "#insurance_vocab.embedding_dim",
+          "embedding_dim": "#siam_embedder.dim",
           "seed": 243,
           "reccurent": "bilstm",
           "max_pooling": true,
           "shared_weights": true,
           "hidden_dim": 300
         },
+        "emb_matrix": "#embeddings.emb_mat",
         "learning_rate": 1e-3,
-        "triplet_mode": false,
+        "triplet_loss": true,
         "margin": 0.1,
         "update_embeddings": "#insurance_vocab.update_embeddings",
         "preprocess": "#insurance_vocab.__call__",
-        "context2emb_vocab": "#insurance_vocab.context2emb_vocab",
-        "response2emb_vocab": "#insurance_vocab.response2emb_vocab",
         "interact_pred_num": 3,
         "save_path": "insurance_ranking/model_weights.h5",
         "load_path": "insurance_ranking/model_weights.h5"
@@ -67,11 +82,11 @@
     "out": ["y_predicted"]
   },
   "train": {
-    "epochs": 200,
+    "epochs": 3,
     "batch_size": 64,
     "pytest_max_batches": 2,
-    "metrics": ["r@1", "rank_response", "loss"],
-    "validation_patience": 5,
+    "metrics": ["r@1", "rank_response"],
+    "validation_patience": 3,
     "val_every_n_epochs": 1
   },
   "metadata": {
@@ -80,7 +95,7 @@
       "../dp_requirements/gensim.txt"
     ],
     "labels": {
-      "telegram_utils": "RankingModel",
+      "telegram_utils": "SiameseModel",
       "server_utils": "Ranker"
     },
     "download": [

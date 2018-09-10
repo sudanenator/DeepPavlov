@@ -14,9 +14,11 @@ from deeppavlov.core.layers import keras_layers
 from pathlib import Path
 from deeppavlov.core.commands.utils import expand_path
 from typing import List, Callable
+from deeppavlov.core.models.keras_model import KerasModel
+
 log = get_logger(__name__)
 
-class RankingNetwork(metaclass=TfModelMeta):
+class SiameseNetwork(metaclass=TfModelMeta):
 
     """Class to perform context-response matching with neural networks.
 
@@ -28,7 +30,7 @@ class RankingNetwork(metaclass=TfModelMeta):
         device_num: A number of a device to perform model training on if several devices are available in a system.
         seed: Random seed.
         shared_weights: Whether to use shared weights in the model to encode contexts and responses.
-        triplet_mode: Whether to use a model with triplet loss.
+        triplet_loss: Whether to use a model with triplet loss.
             If ``False``, a model with crossentropy loss will be used.
         margin: A margin parameter for triplet loss. Only required if ``triplet_mode`` is set to ``True``.
         token_embeddings: Whether to use token (word) embeddings in the model.
@@ -63,23 +65,17 @@ class RankingNetwork(metaclass=TfModelMeta):
     def __init__(self,
                  save_path: str,
                  load_path: str,
-                 len_vocab: int,
-                 max_sequence_length: int,
                  emb_matrix: np.ndarray = None,
                  len_char_vocab: int = None,
-                 max_token_length: int = None,
                  learning_rate: float = 1e-3,
                  device_num: int = 0,
                  seed: int = None,
                  shared_weights: bool = True,
-                 triplet_mode: bool = True,
+                 triplet_loss: bool = True,
                  margin: float = 0.1,
                  token_embeddings: bool = True,
-                 use_matrix: bool = False,
-                 tok_dynamic_batch: bool = False,
                  embedding_dim: int = 300,
                  char_embeddings: bool = False,
-                 char_dynamic_batch: bool = False,
                  char_emb_dim: int = 32,
                  highway_on_top: bool = False,
                  reccurent: str = "bilstm",
@@ -89,13 +85,12 @@ class RankingNetwork(metaclass=TfModelMeta):
                  hardest_positives: bool = False,
                  semi_hard_negatives: bool = False,
                  num_hardest_negatives: int = None,
-                 network: Callable = "bilstm_nn"):
+                 network: Callable = "bilstm_nn",
+                 **kwargs):
 
         self.save_path = expand_path(save_path).resolve()
         self.load_path = expand_path(load_path).resolve()
         self.emb_matrix = emb_matrix
-        self.toks_num = len_vocab
-        self.use_matrix = use_matrix
         self.seed = seed
         self.hidden_dim = hidden_dim
         self.learning_rate = learning_rate
@@ -114,21 +109,14 @@ class RankingNetwork(metaclass=TfModelMeta):
         self.hardest_positives = hardest_positives
         self.semi_hard_negatives = semi_hard_negatives
         self.num_hardest_negatives = num_hardest_negatives
-        self.triplet_mode = triplet_mode
-        if tok_dynamic_batch:
-            self.max_sequence_length = None
-        else:
-            self.max_sequence_length = max_sequence_length
-        if char_dynamic_batch:
-            self.max_token_length = None
-        else:
-            self.max_token_length = max_token_length
+        self.triplet_mode = triplet_loss
 
         self.sess = self._config_session()
         K.set_session(self.sess)
 
         self.optimizer = Adam(lr=self.learning_rate)
         self.embeddings = network.embeddings_model()
+        # self.embeddings = self.simple_model()
         if self.triplet_mode:
             self.loss = self.triplet_loss
         else:
@@ -136,7 +124,6 @@ class RankingNetwork(metaclass=TfModelMeta):
         self.obj_model = self.loss_model()
         self.obj_model.compile(loss=self.loss, optimizer=self.optimizer)
         self.score_model = self.prediction_model()
-
         self.context_embedding = Model(inputs=self.embeddings.inputs,
                                  outputs=self.embeddings.outputs[0])
         self.response_embedding = Model(inputs=self.embeddings.inputs,
@@ -145,7 +132,13 @@ class RankingNetwork(metaclass=TfModelMeta):
         if self.load_path.exists():
            self.load()
         else:
-            self.init_from_scratch()
+            self.load_initial_emb_matrix()
+
+    def simple_model(self):
+        context = Input(shape=(200,))
+        response = Input(shape=(200,))
+        model = Model([context, response], [context, response])
+        return model
 
     def _config_session(self):
         """
@@ -167,9 +160,9 @@ class RankingNetwork(metaclass=TfModelMeta):
         self.obj_model.save_weights(str(self.save_path))
         self.context_embedding.save(str(self.save_path.parent / 'sen_emb_model.h5'))
 
-    def init_from_scratch(self):
+    def load_initial_emb_matrix(self):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
-        if self.use_matrix:
+        if self.emb_matrix is not None:
             if self.token_embeddings and not self.char_embeddings:
                 if self.shared_weights:
                     self.embeddings.get_layer(name="embedding").set_weights([self.emb_matrix])
@@ -276,15 +269,16 @@ class RankingNetwork(metaclass=TfModelMeta):
         # b = [x for el in batch for x in el]
         if self.token_embeddings and not self.char_embeddings:
             # self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
-            self.obj_model.train_on_batch(x=list(batch), y=np.asarray(y))
+            loss = self.obj_model.train_on_batch(x=list(batch), y=np.asarray(y))
         elif not self.token_embeddings and self.char_embeddings:
-            self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
+            loss = self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
         elif self.token_embeddings and self.char_embeddings:
             if self.use_matrix:
-                self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
+                loss = self.obj_model.train_on_batch(x=[np.asarray(x) for x in batch], y=np.asarray(y))
             else:
                 b = [x[0] for x in batch]
-                self.obj_model.train_on_batch(x=b, y=np.asarray(y))
+                loss = self.obj_model.train_on_batch(x=b, y=np.asarray(y))
+        return loss
 
     def predict_score_on_batch(self, batch):
         if self.token_embeddings and not self.char_embeddings:

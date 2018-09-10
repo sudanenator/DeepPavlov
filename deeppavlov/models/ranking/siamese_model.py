@@ -22,15 +22,15 @@ import numpy as np
 from deeppavlov.core.common.attributes import check_attr_true
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.models.nn_model import NNModel
-from deeppavlov.models.ranking.ranking_network import RankingNetwork
+from deeppavlov.models.ranking.siamese_network import SiameseNetwork
 from deeppavlov.core.common.log import get_logger
 from typing import Union, List, Tuple, Dict
 
 log = get_logger(__name__)
 
 
-@register('ranking_model')
-class RankingModel(NNModel):
+@register('siamese_model')
+class SiameseModel(NNModel):
     """Class to perform ranking.
 
     Args:
@@ -65,20 +65,20 @@ class RankingModel(NNModel):
         self.context2emb_vocab = context2emb_vocab
         self.response2emb_vocab = response2emb_vocab
 
-        opt = deepcopy(kwargs)
+        # opt = deepcopy(kwargs)
 
-        network_parameter_names = list(inspect.signature(RankingNetwork.__init__).parameters)
-        self.network_parameters = {par: opt[par] for par in network_parameter_names if par in opt}
+        network_parameter_names = list(inspect.signature(SiameseNetwork.__init__).parameters)
+        self.network_parameters = {par: kwargs[par] for par in network_parameter_names if par in kwargs}
 
         self.load()
 
         train_parameters_names = list(inspect.signature(self._net.train_on_batch).parameters)
-        self.train_parameters = {par: opt[par] for par in train_parameters_names if par in opt}
+        self.train_parameters = {par: kwargs[par] for par in train_parameters_names if par in kwargs}
 
 
     def load(self):
         """Load the model from the last checkpoint if it exists. Otherwise instantiate a new model."""
-        self._net = RankingNetwork(**self.network_parameters)
+        self._net = SiameseNetwork(**self.network_parameters)
 
     def save(self):
         """Save the model."""
@@ -93,7 +93,8 @@ class RankingModel(NNModel):
     def train_on_batch(self, batch, y):
         """Train the model on a batch."""
         b = self.make_batch(batch)
-        self._net.train_on_batch(b, y)
+        loss = self._net.train_on_batch(b, y)
+        return loss
 
     def __call__(self, batch):
         """Make a prediction on a batch."""
@@ -106,26 +107,26 @@ class RankingModel(NNModel):
             y_pred = np.hstack(y_pred)
             return y_pred
 
-        else:
-            c_input = tokenize(batch)
-            c_input = self.dict.make_ints(c_input)
-            c_input_emb = self._net.predict_embedding_on_batch([c_input, c_input], type='context')
-
-            c_emb = [self.dict.context2emb_vocab[i] for i in range(len(self.dict.context2emb_vocab))]
-            c_emb = np.vstack(c_emb)
-            pred_cont = np.sum(c_input_emb * c_emb, axis=1)\
-                     / np.linalg.norm(c_input_emb, axis=1) / np.linalg.norm(c_emb, axis=1)
-            pred_cont = np.flip(np.argsort(pred_cont), 0)[:self.interact_pred_num]
-            pred_cont = [' '.join(self.dict.context2toks_vocab[el]) for el in pred_cont]
-
-            r_emb = [self.dict.response2emb_vocab[i] for i in range(len(self.dict.response2emb_vocab))]
-            r_emb = np.vstack(r_emb)
-            pred_resp = np.sum(c_input_emb * r_emb, axis=1)\
-                     / np.linalg.norm(c_input_emb, axis=1) / np.linalg.norm(r_emb, axis=1)
-            pred_resp = np.flip(np.argsort(pred_resp), 0)[:self.interact_pred_num]
-            pred_resp = [' '.join(self.dict.response2toks_vocab[el]) for el in pred_resp]
-            y_pred = [{"contexts": pred_cont, "responses": pred_resp}]
-            return y_pred
+        # else:
+        #     c_input = tokenize(batch)
+        #     c_input = self.dict.make_ints(c_input)
+        #     c_input_emb = self._net.predict_embedding_on_batch([c_input, c_input], type='context')
+        #
+        #     c_emb = [self.dict.context2emb_vocab[i] for i in range(len(self.dict.context2emb_vocab))]
+        #     c_emb = np.vstack(c_emb)
+        #     pred_cont = np.sum(c_input_emb * c_emb, axis=1)\
+        #              / np.linalg.norm(c_input_emb, axis=1) / np.linalg.norm(c_emb, axis=1)
+        #     pred_cont = np.flip(np.argsort(pred_cont), 0)[:self.interact_pred_num]
+        #     pred_cont = [' '.join(self.dict.context2toks_vocab[el]) for el in pred_cont]
+        #
+        #     r_emb = [self.dict.response2emb_vocab[i] for i in range(len(self.dict.response2emb_vocab))]
+        #     r_emb = np.vstack(r_emb)
+        #     pred_resp = np.sum(c_input_emb * r_emb, axis=1)\
+        #              / np.linalg.norm(c_input_emb, axis=1) / np.linalg.norm(r_emb, axis=1)
+        #     pred_resp = np.flip(np.argsort(pred_resp), 0)[:self.interact_pred_num]
+        #     pred_resp = [' '.join(self.dict.response2toks_vocab[el]) for el in pred_resp]
+        #     y_pred = [{"contexts": pred_cont, "responses": pred_resp}]
+        #     return y_pred
 
     def update_sen_embs(self, sen2emb_vocab, type):
         bs = 512

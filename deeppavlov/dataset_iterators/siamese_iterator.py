@@ -6,8 +6,8 @@ import random
 from typing import Dict, List, Tuple
 
 
-@register('ranking_iterator')
-class RankingIterator(DataLearningIterator):
+@register('siamese_iterator')
+class SiameseIterator(DataLearningIterator):
     """The class contains methods for iterating over a dataset for ranking in training, validation and test mode.
 
     Note:

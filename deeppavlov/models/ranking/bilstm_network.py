@@ -14,12 +14,12 @@ from deeppavlov.core.layers import keras_layers
 from pathlib import Path
 from deeppavlov.core.commands.utils import expand_path
 from deeppavlov.core.common.registry import register
-
+from deeppavlov.models.ranking.siamese_embeddings_network import SiameseEmbeddingsNetwork
 
 log = get_logger(__name__)
 
 @register('bilstm_nn')
-class BiLSTMNetwork(metaclass=TfModelMeta):
+class BiLSTMNetwork(SiameseEmbeddingsNetwork):
 
     """Class to perform context-response matching with neural networks.
 
@@ -69,7 +69,6 @@ class BiLSTMNetwork(metaclass=TfModelMeta):
                  len_char_vocab: int = None,
                  max_token_length: int = None,
                  learning_rate: float = 1e-3,
-                 device_num: int = 0,
                  seed: int = None,
                  shared_weights: bool = True,
                  token_embeddings: bool = True,
@@ -82,7 +81,8 @@ class BiLSTMNetwork(metaclass=TfModelMeta):
                  highway_on_top: bool = False,
                  reccurent: str = "bilstm",
                  hidden_dim: int = 300,
-                 max_pooling: bool = True):
+                 max_pooling: bool = True,
+                 **kwargs):
 
         self.toks_num = len_vocab
         self.use_matrix = use_matrix
@@ -106,6 +106,9 @@ class BiLSTMNetwork(metaclass=TfModelMeta):
             self.max_token_length = None
         else:
             self.max_token_length = max_token_length
+
+
+
 
     def embedding_layer(self):
         out = Embedding(self.toks_num,
