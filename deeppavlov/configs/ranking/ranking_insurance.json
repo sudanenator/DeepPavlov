@@ -85,9 +85,11 @@
     "epochs": 3,
     "batch_size": 64,
     "pytest_max_batches": 2,
-    "metrics": ["r@1", "rank_response"],
+    "train_metrics": ["accuracy"],
+    "metrics": ["r@1_insQA", "rank_response"],
     "validation_patience": 3,
-    "val_every_n_epochs": 1
+    "val_every_n_epochs": 1,
+    "log_every_n_batches": 10
   },
   "metadata": {
     "requirements": [
