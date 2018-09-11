@@ -80,7 +80,7 @@ class SiameseModel(NNModel):
 
     def load(self):
         """Load the model from the last checkpoint if it exists. Otherwise instantiate a new model."""
-        self._net = SiameseNetwork(**self.network_parameters)
+        self._net = SiameseNetwork(num_context_turns=self.num_context_turns, **self.network_parameters)
 
     def save(self):
         """Save the model."""
@@ -103,9 +103,9 @@ class SiameseModel(NNModel):
         if len(batch) > 1:
             y_pred = []
             b = self.make_batch(batch)
-            for el in b[1:]:
-                yp = self._net.predict_score_on_batch([b[0:self.num_context_turns], el])
-                if len(b[self.num_context_turns]) > 1:
+            for el in b[:self.num_context_turns]:
+                yp = self._net.predict_score_on_batch(b[0:self.num_context_turns] + [el])
+                if len(b[:self.num_context_turns]) > 1:
                     yp = np.expand_dims(yp, 1)
                 y_pred.append(yp)
             y_pred = np.hstack(y_pred)

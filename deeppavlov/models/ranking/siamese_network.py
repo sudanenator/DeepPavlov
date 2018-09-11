@@ -59,6 +59,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
     def __init__(self,
                  save_path: str,
                  load_path: str,
+                 num_context_turns: int,
                  emb_matrix: np.ndarray = None,
                  len_char_vocab: int = None,
                  learning_rate: float = 1e-3,
@@ -81,6 +82,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
 
         self.save_path = expand_path(save_path).resolve()
         self.load_path = expand_path(load_path).resolve()
+        self.num_context_turns = num_context_turns
         self.emb_matrix = emb_matrix
         self.seed = seed
         self.hidden_dim = hidden_dim
@@ -159,11 +161,13 @@ class SiameseNetwork(metaclass=TfModelMeta):
                     self.embeddings.get_layer(name="embedding_b").set_weights([self.emb_matrix])
 
     def prediction_model(self):
-        c_shape = K.int_shape(self.embeddings.inputs[0])
-        r_shape = K.int_shape(self.embeddings.inputs[1])
-        c = Input(batch_shape=c_shape)
+        c_shapes = [K.int_shape(self.embeddings.inputs[i]) for i in range(self.num_context_turns)]
+        r_shape = K.int_shape(self.embeddings.inputs[-1])
+        c = []
+        for i in range(self.num_context_turns):
+            c.append(Input(batch_shape=c_shapes[i]))
         r = Input(batch_shape=r_shape)
-        emb_c, emb_r = self.embeddings([c, r])
+        emb_c, emb_r = self.embeddings(c + [r])
         # if self.distance == "cos_similarity":
         #     cosine_layer = Dot(normalize=True, axes=-1, name="score_model")
         #     score = cosine_layer([emb_c, emb_r])
@@ -176,21 +180,23 @@ class SiameseNetwork(metaclass=TfModelMeta):
             score = Dense(1, activation='sigmoid', name="score_model")(dist)
             score = Lambda(lambda x: 1. - K.squeeze(x, -1))(score)
         score = Lambda(lambda x: 1. - x)(score)
-        model = Model([c, r], score)
+        model = Model(c +[r], score)
         return model
 
     def loss_model(self):
-        c_shape = K.int_shape(self.embeddings.inputs[0])
-        r_shape = K.int_shape(self.embeddings.inputs[1])
-        c = Input(batch_shape=c_shape)
+        c_shapes = [K.int_shape(self.embeddings.inputs[i]) for i in range(self.num_context_turns)]
+        r_shape = K.int_shape(self.embeddings.inputs[-1])
+        c = []
+        for i in range(self.num_context_turns):
+            c.append(Input(batch_shape=c_shapes[i]))
         r = Input(batch_shape=r_shape)
-        emb_c, emb_r = self.embeddings([c, r])
+        emb_c, emb_r = self.embeddings(c + [r])
         if self.triplet_mode:
             dist = Lambda(self._pairwise_distances)([emb_c, emb_r])
         else:
             dist = Lambda(self.diff_mult_dist)([emb_c, emb_r])
             dist = Dense(1, activation='sigmoid', name="score_model")(dist)
-        model = Model([c, r], dist)
+        model = Model(c + [r], dist)
         return model
 
     def diff_mult_dist(self, inputs):

@@ -121,16 +121,22 @@ class BiLSTMGRUNetwork(SiameseEmbeddingsNetwork):
         return out
 
     def embeddings_model(self):
+        input = []
         if self.use_matrix:
-            input = (self.num_context_turns + 1) * [Input(shape=(self.max_sequence_length,))]
-            context = input[self.num_context_turns]
+            for i in range(self.num_context_turns + 1):
+                input.append(Input(shape=(self.max_sequence_length,)))
+            context = input[:self.num_context_turns]
             response = input[-1]
             emb_layer = self.embedding_layer()
+            # for i in range(self.num_context_turns):
+            #     emb_c = emb_layer()
             emb_c = [emb_layer(el) for el in context]
             emb_r = emb_layer(response)
         else:
-            context = self.num_context_turns * [Input(shape=(self.max_sequence_length, self.embedding_dim,))]
-            response = Input(shape=(self.max_sequence_length, self.embedding_dim,))
+            for i in range(self.num_context_turns + 1):
+                input.append(Input(shape=(self.max_sequence_length, self.embedding_dim,)))
+            context = input[:self.num_context_turns]
+            response = input[-1]
             emb_c = context
             emb_r = response
         lstm_layer = self.lstm_layer()
@@ -139,8 +145,9 @@ class BiLSTMGRUNetwork(SiameseEmbeddingsNetwork):
         pooling_layer = GlobalMaxPooling1D()
         lstm_c = [pooling_layer(el) for el in lstm_c]
         lstm_r = pooling_layer(lstm_r)
-        lstm_c = [Lambda(K.expand_dims(el, 1)) for el in lstm_c]
+        lstm_c = [Lambda(lambda x: K.expand_dims(x, 1))(el) for el in lstm_c]
+        lstm_c = Lambda(lambda x: K.concatenate(x, 1))(lstm_c)
         gru_layer = GRU(2 * self.hidden_dim)
-        gru_c = gru_layer(Lambda(K.concatenate(lstm_c, 1)))
-        model = Model([context, response], [gru_c, lstm_r])
+        gru_c = gru_layer(lstm_c)
+        model = Model(input, [gru_c, lstm_r])
         return model

@@ -1,7 +1,6 @@
 from deeppavlov.core.common.registry import register
 from deeppavlov.core.data.data_learning_iterator import DataLearningIterator
 
-import numpy as np
 import random
 from typing import Dict, List, Tuple
 
@@ -30,7 +29,7 @@ class SiameseIterator(DataLearningIterator):
         self.random_batches = random_batches
         self.batches_per_epoch = batches_per_epoch
 
-        np.random.seed(seed)
+        random.seed(seed)
         self.train = data.get('train', [])
         self.valid = data.get('valid', [])
         self.test = data.get('test', [])
@@ -67,10 +66,10 @@ class SiameseIterator(DataLearningIterator):
             num_steps = len(data) // batch_size
         if data_type == "train":
             if shuffle:
-                np.random.shuffle(data)
+                random.shuffle(data)
             for i in range(num_steps):
                 if self.random_batches:
-                    context_response_data = np.random.choice(data, size=batch_size, replace=False)
+                    context_response_data = random.sample(data, k=batch_size)
                 else:
                     context_response_data = data[i * batch_size:(i + 1) * batch_size]
                 yield tuple(zip(*context_response_data))
