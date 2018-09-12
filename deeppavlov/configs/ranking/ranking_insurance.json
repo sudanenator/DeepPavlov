@@ -12,12 +12,12 @@
     "in_y": ["y"],
     "pipe": [
       {
-        "id": "insurance_vocab",
+        "id": "preproc",
         "name": "siamese_preprocessor",
-        "save_path": "vocabs/ins_tok.dict",
-        "load_path": "vocabs/ins_tok.dict",
-        "use_matrix": true,
-        "num_ranking_samples": 10,
+        "save_path": "vocabs/tok.dict",
+        "load_path": "vocabs/tok.dict",
+        "use_matrix": false,
+        "num_ranking_samples": 500,
         "max_sequence_length": 200,
         "update_embeddings": false,
         "fit_on": ["x"],
@@ -31,8 +31,8 @@
         {
           "id": "siam_vocab",
           "name":"dialog_vocab",
-          "save_path": "vocabs/tok.dict",
-          "load_path": "vocabs/tok.dict"
+          "save_path": "insurance_vocabs/int_tok.dict",
+          "load_path": "insurance_vocabs/int_tok.dict"
         },
         "embedder":
         {
@@ -59,8 +59,8 @@
         "network": {
           "name": "bilstm_nn",
           "len_vocab": "#siam_vocab.len",
-          "use_matrix": "#insurance_vocab.use_matrix",
-          "max_sequence_length": "#insurance_vocab.max_sequence_length",
+          "use_matrix": "#preproc.use_matrix",
+          "max_sequence_length": "#preproc.max_sequence_length",
           "embedding_dim": "#siam_embedder.dim",
           "seed": 243,
           "reccurent": "bilstm",
@@ -68,14 +68,15 @@
           "shared_weights": true,
           "hidden_dim": 300
         },
+        "use_matrix": "#preproc.use_matrix",
         "emb_matrix": "#embeddings.emb_mat",
         "learning_rate": 1e-3,
-        "triplet_loss": false,
-        "hard_triplets": true,
+        "triplet_loss": true,
+        "hard_triplets": false,
         "distance": "euclidian",
         "margin": 0.1,
-        "update_embeddings": "#insurance_vocab.update_embeddings",
-        "preprocess": "#insurance_vocab.__call__",
+        "update_embeddings": "#preproc.update_embeddings",
+        "preprocess": "#preproc.__call__",
         "interact_pred_num": 3,
         "save_path": "insurance_ranking/model_weights.h5",
         "load_path": "insurance_ranking/model_weights.h5"
@@ -84,13 +85,13 @@
     "out": ["y_predicted"]
   },
   "train": {
-    "epochs": 3,
-    "batch_size": 128,
+    "epochs": 200,
+    "batch_size": 256,
     "pytest_max_batches": 2,
     "train_metrics": [],
     "metrics": ["r@1_insQA", "rank_response"],
-    "validation_patience": 3,
-    "val_every_n_epochs": 1,
+    "validation_patience": 5,
+    "val_every_n_epochs": 5,
     "log_every_n_batches": 10
   },
   "metadata": {

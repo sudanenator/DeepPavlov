@@ -6,7 +6,7 @@
   "dataset_iterator": {
     "name": "siamese_iterator",
     "random_batches": true,
-    "batches_per_epoch": 10,
+    "batches_per_epoch": 100,
     "seed": 243
   },
   "chainer": {
@@ -16,8 +16,8 @@
       {
         "id": "preproc",
         "name": "siamese_preprocessor",
-        "save_path": "vocabs/ub_tok.dict",
-        "load_path": "vocabs/ub_tok.dict",
+        "save_path": "vocabs/tok.dict",
+        "load_path": "vocabs/tok.dict",
         "use_matrix": false,
         "num_ranking_samples": 10,
         "num_context_turns": 3,
@@ -33,15 +33,15 @@
         {
           "id": "siam_vocab",
           "name":"dialog_vocab",
-          "save_path": "vocabs/tok.dict",
-          "load_path": "vocabs/tok.dict"
+          "save_path": "ubuntu_v2_mt_vocabs/int_tok.dict",
+          "load_path": "ubuntu_v2_mt_vocabs/int_tok.dict"
         },
         "embedder":
         {
           "id": "siam_embedder",
           "name": "fasttext",
-          "load_path": "ubuntu_v2_embeddings/wiki.en.bin",
-          "save_path": "ubuntu_v2_embeddings/wiki.en.bin",
+          "load_path": "ubuntu_v2_mt_embeddings/wiki.en.bin",
+          "save_path": "ubuntu_v2_mt_embeddings/wiki.en.bin",
           "dim": 300
         }
       },
@@ -66,7 +66,7 @@
           "max_sequence_length": "#preproc.max_sequence_length",
           "embedding_dim": "#siam_embedder.dim",
           "seed": 243,
-          "hidden_dim": 50
+          "hidden_dim": 300
         },
         "use_matrix": "#preproc.use_matrix",
         "emb_matrix": "#embeddings.emb_mat",
@@ -81,13 +81,13 @@
   },
   "train": {
     "epochs": 200,
-    "batch_size": 32,
+    "batch_size": 256,
     "pytest_max_batches": 2,
-    "train_metrics": ["accuracy"],
+    "train_metrics": [],
     "metrics": ["r@1", "rank_response"],
     "validation_patience": 10,
     "val_every_n_epochs": 1,
-    "log_every_n_batches": 1
+    "log_every_n_batches": 10
   },
   "metadata": {
     "requirements": [
