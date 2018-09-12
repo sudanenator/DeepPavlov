@@ -20,7 +20,7 @@
         "load_path": "vocabs/tok.dict",
         "use_matrix": false,
         "num_ranking_samples": 10,
-        "num_context_turns": 3,
+        "num_context_turns": 10,
         "max_sequence_length": 20,
         "fit_on": ["x"],
         "in": ["x"],

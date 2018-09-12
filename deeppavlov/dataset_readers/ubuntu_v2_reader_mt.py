@@ -41,7 +41,7 @@ class UbuntuV2ReaderMT(DatasetReader):
             reader = csv.reader(f)
             next(reader)
             for el in reader:
-                contexts.append(el[0].split('__eot__')[:3])
+                contexts.append(self._expand_context(el[0].split('__eot__')))
                 responses.append(el[1])
                 labels.append(int(el[2]))
         data = [el[0] + [el[1]] for el in zip(contexts, responses)]
@@ -55,8 +55,12 @@ class UbuntuV2ReaderMT(DatasetReader):
             reader = csv.reader(f)
             next(reader)
             for el in reader:
-                contexts.append(el[0].split('__eot__')[:3])
+                contexts.append(self._expand_context(el[0].split('__eot__')))
                 responses.append(el[1:])
         data = [el[0] + el[1] for el in zip(contexts, responses)]
         data = [(el, 1) for el in data]
         return data
+
+    def _expand_context(self, context, num_turns=10):
+        f = lambda x: x + (num_turns - len(x)) * [''] if len(x) < num_turns else x[:num_turns]
+        return f(context)
