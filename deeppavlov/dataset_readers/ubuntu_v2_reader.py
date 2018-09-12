@@ -7,7 +7,7 @@ import random
 import csv
 import re
 
-@register('ubuntu_v2_reader')
+@register('ubuntu_v2_reader_mt')
 class UbuntuV2Reader(DatasetReader):
     
     def read(self, data_path):
@@ -21,7 +21,6 @@ class UbuntuV2Reader(DatasetReader):
         self.classes_vocab_train = {}
         self.classes_vocab_valid = {}
         self.classes_vocab_test = {}
-        self._build_sen2int_classes_vocabs(train_fname, valid_fname, test_fname)
         dataset["train"] = self.preprocess_data_train(train_fname)
         dataset["valid"] = self.preprocess_data_validation(valid_fname)
         dataset["test"] = self.preprocess_data_validation(test_fname)
@@ -34,36 +33,6 @@ class UbuntuV2Reader(DatasetReader):
         #     mark_done(data_path)
         pass
 
-    def _build_sen2int_classes_vocabs(self, train_fname, valid_fname, test_fname):
-        cont_train = []
-        resp_train = []
-        cont_valid = []
-        resp_valid = []
-        cont_test = []
-        resp_test = []
-
-        with open(train_fname, 'r') as f:
-            reader = csv.reader(f)
-            next(reader)
-            for el in reader:
-                cont_train.append(el[0])
-                resp_train.append(el[1])
-        with open(valid_fname, 'r') as f:
-            reader = csv.reader(f)
-            next(reader)
-            for el in reader:
-                cont_valid.append(el[0])
-                resp_valid += el[1:]
-        with open(test_fname, 'r') as f:
-            reader = csv.reader(f)
-            next(reader)
-            for el in reader:
-                cont_test.append(el[0])
-                resp_test += el[1:]
-
-        sen = cont_train + resp_train + cont_valid + resp_valid + cont_test + resp_test
-        self.sen2int_vocab = {el[1]: el[0] for el in enumerate(sen)}
-
     def preprocess_data_train(self, train_fname):
         contexts = []
         responses = []
@@ -72,26 +41,22 @@ class UbuntuV2Reader(DatasetReader):
             reader = csv.reader(f)
             next(reader)
             for el in reader:
-                contexts.append(self.sen2int_vocab[el[0]])
-                responses.append(self.sen2int_vocab[el[1]])
+                contexts.append(el[0])
+                responses.append(el[1])
                 labels.append(int(el[2]))
-        data = [{"context": el[0], "response": el[1],
-                "pos_pool": [el[1]], "neg_pool": None, "label": el[2]}
-                for el in zip(contexts, responses, labels)]
+        data = list(zip(contexts, responses))
+        data = list(zip(data, labels))
         return data
 
     def preprocess_data_validation(self, fname):
         contexts = []
         responses = []
-        negative_responses_pool = []
         with open(fname, 'r') as f:
             reader = csv.reader(f)
             next(reader)
             for el in reader:
-                contexts.append(self.sen2int_vocab[el[0]])
-                responses.append(self.sen2int_vocab[el[1]])
-                negative_responses_pool.append([self.sen2int_vocab[x] for x in el[2:]])
-        data = [{"context": el[0], "response": el[1],
-                "pos_pool": [el[1]], "neg_pool": el[2]}
-                for el in zip(contexts, responses, negative_responses_pool)]
+                contexts.append(el[0])
+                responses.append(el[1:])
+        data = [[el[0]] + el[1] for el in zip(contexts, responses)]
+        data = [(el, 1) for el in data]
         return data
