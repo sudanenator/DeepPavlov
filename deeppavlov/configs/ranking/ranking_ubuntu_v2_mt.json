@@ -40,8 +40,8 @@
         {
           "id": "siam_embedder",
           "name": "fasttext",
-          "load_path": "ubuntu_v2_mt_embeddings/wiki.en.bin",
-          "save_path": "ubuntu_v2_mt_embeddings/wiki.en.bin",
+          "load_path": "ubuntu_v2_embeddings/wiki.en.bin",
+          "save_path": "ubuntu_v2_embeddings/wiki.en.bin",
           "dim": 300
         }
       },
