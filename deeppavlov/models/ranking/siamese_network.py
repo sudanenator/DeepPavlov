@@ -273,7 +273,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
         mask1 = K.expand_dims(K.equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 2)
         mask1 = K.cast(mask1, K.dtype(pairwise_dist))
         # mask a == p
-        mask2 = K.expand_dims(K.not_equal(K.expand_dims(pairwise_dist, 2), 0.0), 2)
+        mask2 = K.expand_dims(K.not_equal(pairwise_dist, 0.0), 2)
         mask2 = K.cast(mask2, K.dtype(pairwise_dist))
         # mask label(n) == label(a)
         mask3 = K.expand_dims(K.not_equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 1)
