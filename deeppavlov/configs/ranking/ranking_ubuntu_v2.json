@@ -16,7 +16,7 @@
         "name": "siamese_preprocessor",
         "save_path": "vocabs/int_tok.dict",
         "load_path": "vocabs/int_tok.dict",
-        "use_matrix": true,
+        "use_matrix": false,
         "num_ranking_samples": 10,
         "max_sequence_length": 50,
         "update_embeddings": false,
