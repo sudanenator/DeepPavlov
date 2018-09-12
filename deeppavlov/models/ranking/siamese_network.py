@@ -59,6 +59,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
     def __init__(self,
                  save_path: str,
                  load_path: str,
+                 use_matrix: bool,
                  num_context_turns: int,
                  emb_matrix: np.ndarray = None,
                  len_char_vocab: int = None,
@@ -82,6 +83,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
 
         self.save_path = expand_path(save_path).resolve()
         self.load_path = expand_path(load_path).resolve()
+        self.use_matrix = use_matrix
         self.num_context_turns = num_context_turns
         self.emb_matrix = emb_matrix
         self.seed = seed
@@ -152,7 +154,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
 
     def load_initial_emb_matrix(self):
         log.info("[initializing new `{}`]".format(self.__class__.__name__))
-        if self.emb_matrix is not None:
+        if self.use_matrix:
             if self.token_embeddings and not self.char_embeddings:
                 if self.shared_weights:
                     self.embeddings.get_layer(name="embedding").set_weights([self.emb_matrix])

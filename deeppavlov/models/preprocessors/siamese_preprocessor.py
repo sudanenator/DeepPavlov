@@ -129,10 +129,14 @@ class SiamesePreprocessor(Estimator):
         for i in range(len(x_cut[0])):
             x_reshape.append([el[i] for el in x_cut])
         x_tok = [self.tokenizer(el) for el in x_reshape]
+        f = lambda x: [''] if len(x) == 0 else x
+        x_ctok = []
+        for el in x_tok:
+            x_ctok.append([f(x) for x in el])
         if self.use_matrix:
-            x_proc = self.vocab(x_tok)
+            x_proc = self.vocab(x_ctok)
         else:
-            x_proc = [self.embedder(el) for el in x_tok]
+            x_proc = [self.embedder(el) for el in x_ctok]
         x_proc = [zero_pad_truncate(el, self.max_sequence_length) for el in x_proc]
         x_proc = [list(el) for el in x_proc]
         x_proc = list(zip(*x_proc))
