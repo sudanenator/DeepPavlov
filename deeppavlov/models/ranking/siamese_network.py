@@ -259,12 +259,12 @@ class SiameseNetwork(metaclass=TfModelMeta):
         mask_anchor_negative = self._get_anchor_negative_triplet_mask(y_true, pairwise_dist)
         anchor_negative_dist = mask_anchor_negative * pairwise_dist
         mask_anchor_negative = self._get_semihard_anchor_negative_triplet_mask(anchor_negative_dist,
-                                                                               hardest_positive_dist,
-                                                                               mask_anchor_negative)
+                                                                          hardest_positive_dist,
+                                                                          mask_anchor_negative)
         max_anchor_negative_dist = K.max(pairwise_dist, axis=1, keepdims=True)
         anchor_negative_dist = pairwise_dist + max_anchor_negative_dist * (1.0 - mask_anchor_negative)
         hardest_negative_dist = K.min(anchor_negative_dist, axis=1, keepdims=True)
-        triplet_loss = tf.maximum(hardest_positive_dist - hardest_negative_dist + self.margin, 0.0)
+        triplet_loss = K.clip(hardest_positive_dist - hardest_negative_dist + self.margin, 0.0, None)
         triplet_loss = K.mean(triplet_loss)
         return triplet_loss
 
@@ -282,16 +282,16 @@ class SiameseNetwork(metaclass=TfModelMeta):
 
     def _get_anchor_positive_triplet_mask(self, y_true, pairwise_dist):
         # mask label(a) != label(p)
-        mask1 = K.expand_dims(K.equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 2)
+        mask1 = K.equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1))
         mask1 = K.cast(mask1, K.dtype(pairwise_dist))
         # mask a == p
-        mask2 = K.expand_dims(K.not_equal(K.expand_dims(pairwise_dist, 2), 0.0), 2)
+        mask2 = K.not_equal(pairwise_dist, 0.0)
         mask2 = K.cast(mask2, K.dtype(pairwise_dist))
         return mask1 * mask2
 
     def _get_anchor_negative_triplet_mask(self, y_true, pairwise_dist):
         # mask label(n) == label(a)
-        mask = K.expand_dims(K.not_equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1)), 1)
+        mask = K.not_equal(K.expand_dims(y_true, 0), K.expand_dims(y_true, 1))
         mask = K.cast(mask, K.dtype(pairwise_dist))
         return mask
 
@@ -299,7 +299,7 @@ class SiameseNetwork(metaclass=TfModelMeta):
         # mask max(dist(a,p)) < dist(a,n)
         mask = K.greater(negative_dist, hardest_positive_dist)
         mask = K.cast(mask, K.dtype(negative_dist))
-        mask_semihard = K.cast(K.greater(K.sum(mask, 1), 0.0), K.dtype(negative_dist))
+        mask_semihard = K.cast(K.expand_dims(K.greater(K.sum(mask, 1), 0.0), 1), K.dtype(negative_dist))
         mask = mask_negative * (1 - mask_semihard) + mask * mask_semihard
         return mask
 

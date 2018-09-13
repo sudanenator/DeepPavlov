@@ -23,7 +23,7 @@ def r_at_10(labels, predictions):
 def recall_at_k(y_true, y_pred, k):
     num_examples = float(len(y_pred))
     predictions = np.array(y_pred)
-    predictions = np.argsort(predictions, -1)[:, :k]
+    predictions = np.argsort(predictions, -1)[:, :k][::-1]
     num_correct = 0
     for el in predictions:
         if 0 in el:
@@ -35,7 +35,13 @@ def rank_response(y_true, y_pred):
     num_examples = float(len(y_pred))
     predictions = np.array(y_pred)
     predictions = np.argsort(predictions, -1)
-    return float(np.sum(np.argmax(predictions, -1)))/num_examples
+    rank_tot = 0
+    for el in predictions:
+        for i, x in enumerate(el):
+            if x == 0:
+                rank_tot += i
+                break
+    return float(sum(rank_tot))/num_examples
 
 @register_metric('r@1_insQA')
 def r_at_1_insQA(y_true, y_pred):
@@ -51,4 +57,3 @@ def recall_at_k_insQA(y_true, y_pred, k):
             if predictions[i][j] in np.arange(labels[i][j]):
                 flags[i][j] = 1.
     return np.mean((np.sum(flags, -1) >= 1.).astype(float))
-
