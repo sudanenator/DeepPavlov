@@ -5,6 +5,8 @@
   },
   "dataset_iterator": {
     "name": "siamese_iterator",
+    "random_batches": true,
+    "batches_per_epoch": 200,
     "seed": 243
   },
   "chainer": {
